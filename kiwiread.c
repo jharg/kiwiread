@@ -551,15 +551,29 @@ void showmap(void *map, size_t len)
 {
   struct mapframe_t *mf = map;
 
+  if (len >= 300)
+    return;
   printf(" @@@@ \n");
   showpid(mf->llpid);
   printf("\n");
   os_dump(map, len);
 }
 
+void divbsmr(int lvl, int a, int n, int b, int m)
+{
+  int x, y;
+
+  if (lvl != 2)
+    return;
+  y = (a/n) + (b/m)*n;
+  x = (a%n) + (b%m)*n;
+  fprintf(stderr, "<div style=\"background-color:green; position:fixed; width: 8px; height: 8px; bottom:%dpx; left:%dpx;\"/>\n",
+	  y * 10, x * 10);
+}
+
 void showalldata()
 {
-  int fd, i, fdp, j, lvl, k, bset, pt;
+  int fd, i, fdp, j, lvl, k, bset, pt, bc;
   struct datavol_t dv;
   struct mhr_t *mhr;
   off_t moff, cur;
@@ -568,8 +582,6 @@ void showalldata()
   struct pdmdh_t *pdmdh;
   struct lmr_t *lmr, **lmrmap;
   struct bsmr_t *bsmr, **bsmrmap;
-  int nx[64] = { 0 };
-  int ny[64] = { 0 };
 
   fd = open("/media/ALLDATA.KWI", O_LARGEFILE|O_RDONLY);
   if (fd < 0)
@@ -691,19 +703,16 @@ void showalldata()
     }
 
     lvl = extract(lmr->header, 10, 15);
-    nx[lvl] = 1+lmr->nblocksets.lng;
-    ny[lvl] = 1+lmr->nblocksets.lat;
-
     printf(" latlng block sets: %dx%d\n", 
-	   nx[lvl], ny[lvl]);
+	   1+lmr->nblocksets.lng, 1+lmr->nblocksets.lat);
     printf(" latlng blocks    : %dx%d\n",
 	   1+lmr->nblocks.lng, 1+lmr->nblocks.lat);
     for (j=0; j<=3; j++) {
-      printf(" latlng parcels%d : %dx%d\n", j, 1+lmr->nparcels[j].lat, 1+lmr->nparcels[j].lng);
+      printf(" latlng parcels%d  : %dx%d\n", j, 1+lmr->nparcels[j].lat, 1+lmr->nparcels[j].lng);
     }
-    printf(" bsmroff:         : %d\n",
+    printf(" bsmroff:          : %d\n",
 	   lmr->bsmr_off * 2);
-    printf(" node record size : %d\n", lmr->nrsize * 2);
+    printf(" node record size  : %d\n", lmr->nrsize * 2);
     moff += pdmdh->lmr_sz * 2;
   }
 
@@ -719,23 +728,30 @@ void showalldata()
 
     lvl = extract(bsmr->header, 10, 15);
     bset = extract(bsmr->header, 0, 7);
+    lmr = findlevel(lmrmap, pdmdh->nlmr, lvl);
+
+    bc = 0;
     printf("---- bsmr%d: level=%2d blockset=%3d moff=%d [%dx%d]\n",
-	   i, lvl, bset, moff, nx[lvl], ny[lvl]);
+	   i, lvl, bset, moff, 1+lmr->nblocksets.lng, 1+lmr->nblocksets.lat);
     if (bsmr->bmt_size) {
       struct bmt_t *bmt;
       off_t boff, poff;
       void *pdat;
 
       lmr = findlevel(lmrmap, pdmdh->nlmr, lvl);
+      //os_dump(zdat[0] + bsmr->bmt_offset * 2, bsmr->bmt_size * 2);
       printf("  bmt_offset: %d\n", bsmr->bmt_offset * 2);
       printf("  bmt_size  : %d\n", bsmr->bmt_size * 2);
-      //os_dump(zdat[0] + bsmr->bmt_offset * 2, bsmr->bmt_size * 2);
 
       boff = 0;
       while (boff < bsmr->bmt_size * 2) {
 	struct parman_t *pi;
 	union mapinfo_t *mi;
 
+	divbsmr(lvl, bset, 1+lmr->nblocksets.lng, 
+		bc, 1+lmr->nblocks.lng);
+
+	bc++;  // matches nblocks.lat * nblocks.lng
 	bmt = (struct bmt_t *)(zdat[0] + bsmr->bmt_offset*2 + boff);
 
 	swapl(&bmt->dsa.addr);
@@ -774,21 +790,21 @@ void showalldata()
 	      swapl(&mi->map0.dsa.addr);
 	      swapw(&mi->map0.size);
 	      if (mi->map0.size) {
-		printf("    MapPar Addr: [%2d,%2d] level:%d.%d  Addr:%lx  size:%ld\n", 
-		       j / (1+lmr->nparcels[pt].lat),
-		       j % (1+lmr->nparcels[pt].lat),
+		printf("    MapPar Addr: level:%d.%d  blockset:%d.%d parcel:%d  Addr:%lx  size:%ld\n", 
 		       lvl, pt, 
+		       bset, bc-1,
+		       j,
 		       mi->map0.dsa.addr,
 		       mi->map0.size * logical_sz);
 		mapoff = getsector(mi->map0.dsa);
-		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
-		showmap(mdat, mi->map0.size * logical_sz);
-		free(mdat);
+		//mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
+		//showmap(mdat, mi->map0.size * logical_sz);
+		//free(mdat);
 	      } else if (mi->map0.dsa.addr != -1) {
-		printf("    MapPar Addr: [%2d,%2d] level:%d.%d  Ref :%lx\n",
-		       j / (1+lmr->nparcels[pt].lat),
-		       j % (1+lmr->nparcels[pt].lat),
+		printf("    MapPar Addr: level:%d.%d  blockset:%d.%d parcel:%d  Ref :%lx\n",
 		       lvl, pt, 
+		       bset, bc-1,
+		       j,
 		       mi->map0.dsa.addr * 2);
 	      }
 	      poff += 6;
@@ -797,12 +813,13 @@ void showalldata()
 	}
 	boff += 6;
       }
+      /* ASSERT: Number of blocks per blockset == nbx[lvl] * nby[lvl] */
+      printf("BlockSet Count %d = %d\n", lvl, bc);
     }
 
     moff += sizeof(*bsmr);
   }
-
-  /* ASSERT: count of blocksets per level == nx[lvl] * ny[lvl] */
+  /* ASSERT: count of blocksets per level == nbsx[lvl] * nbsy[lvl] */
   exit(0);
 }
 
@@ -816,6 +833,7 @@ int main(int argc, char *argv[])
   struct mii_t *mii;
   struct mmi_t *mmi;
 
+  setbuf(stdout, NULL);
   showalldata();
   if ((fd = open("/media/LOADING.KWI", O_RDONLY)) < 0) {
     perror("open");
