@@ -439,15 +439,34 @@ struct bmt_t
   uint8_t               filename[12];  // [C]   optional
 } __attribute__((packed));
 
-/* Main Map Parcel Management Record */
-struct mapar_t
+/* Parcel Management Info */
+struct parman_t
 {
   uint16_t             type;       // [N:N] Parcel Management type
   uint16_t             routeoff;   // [D] route guidance parcel management list
+};
+
+/* Main Map Parcel Management Record */
+union mapinfo_t {
   struct {
     struct sectoraddress dsa;      // [DSA] sector address
-    uint16_t             size;     // [BS] size in logical sectors
-  } map[1];
+    uint16_t             size;    // [BS] size in logical sectors
+  } __attribute__((packed)) map0;
+  struct {
+    struct sectoraddress dsa;
+    uint16_t             size1;
+    uint16_t             size2;
+  } __attribute__((packed)) map1;
+  struct {
+    struct sectoraddress dsa;
+    uint16_t             size1;
+    uint16_t             size2;
+  } __attribute__((packed)) map2;
+  struct {
+    struct sectoraddress dsa;
+    uint16_t             size;
+    char                 filename[12];
+  } __attribute__((packed)) map100;
 } __attribute__((packed));
 
 /* Road Data frame
@@ -691,7 +710,8 @@ void showalldata()
 
       boff = 0;
       while (boff < bsmr->bmt_size * 2) {
-	struct mapar_t *mp;
+	struct parman_t *pi;
+	union mapinfo_t *mi;
 
 	bmt = (struct bmt_t *)(zdat[0] + bsmr->bmt_offset*2 + boff);
 
@@ -705,16 +725,16 @@ void showalldata()
 
 	  poff = 0;
 	  while (poff < bmt->size*logical_sz) {
-	    mp = (void *)(pdat + poff);
+	    pi = (void *)(pdat + poff);
 
-	    swapw(&mp->type);
-	    swapw(&mp->routeoff);
+	    swapw(&pi->type);
+	    swapw(&pi->routeoff);
 
-	    bset = extract(mp->type, 8, 9);
-	    printf("   =====================\n");
-	    printf("   Parcel type     : %d\n", extract(mp->type, 8, 9));
-	    printf("   Parcel list type: %d\n", extract(mp->type, 0, 7));
-	    printf("   Route Offset    : %d\n", mp->routeoff);
+	    bset = extract(pi->type, 8, 9);
+	    printf("   ===================== %x\n", poff);
+	    printf("   Parcel type     : %d\n", extract(pi->type, 8, 9));
+	    printf("   Parcel list type: %d\n", extract(pi->type, 0, 7));
+	    printf("   Route Offset    : %d\n", pi->routeoff);
 
 	    k = (1+lmr->nparcels[bset].lat)*(1+lmr->nparcels[bset].lng);
 	    printf("   Map count       : %dx%d = %d\n", 
@@ -722,29 +742,34 @@ void showalldata()
 
 	    poff += 4;
 	    for (j=0; j<k; j++) {
-	      swapl(&mp->map[j].dsa.addr);
-	      swapw(&mp->map[j].size);
-	      printf("    MapPar Addr: %lx  size:%ld\n", mp->map[j].dsa.addr, 
-		     mp->map[j].size * logical_sz);
+	      void *mdat;
+	      off_t mapoff;
+
+	      if (poff > bmt->size * logical_sz)
+		break;
+	      mi = (void *)(pdat + poff);
+	      swapl(&mi->map0.dsa.addr);
+	      swapw(&mi->map0.size);
+	      if (mi->map0.size) {
+		printf("    MapPar Addr: [%2d,%2d] level:%d.%d  Addr:%lx  size:%ld\n", 
+		       j / (1+lmr->nparcels[bset].lat),
+		       j % (1+lmr->nparcels[bset].lat),
+		       lvl, bset, 
+		       mi->map0.dsa.addr,
+		       mi->map0.size * logical_sz);
+		mapoff = getsector(mi->map0.dsa);
+		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
+		os_dump(mdat, mi->map0.size * logical_sz);
+	      } else if (mi->map0.dsa.addr != -1) {
+		printf("    MapPar Addr: [%2d,%2d] level:%d.%d  Ref :%lx\n",
+		       j / (1+lmr->nparcels[bset].lat),
+		       j % (1+lmr->nparcels[bset].lat),
+		       lvl, bset, 
+		       mi->map0.dsa.addr * 2);
+	      }
 	      poff += 6;
 	    }
 	  }
-#if 0
-	  mp = pdat;
-	  wh
-	  poff = be16toh(*(uint16_t *)pdat);
-
-	  poff = 4;
-	  npar = (1+extract(lmarmap[lvl].nparcels, 0, 7))*(1+extract(lmarmap[lvl].nparcels, 8, 15));
-	  for (j=0; j<
-	  for (poff=4; poff < bmt->size*logical_sz; poff += 6) {
-	    mp = (void *)(pdat + poff);
-	    swapl(&mp->dsa.addr);
-	    swapw(&mp->size);
-
-	    /* Process npar*npar, npar[0]*npar[0], npar[1]*npar[1], npar[2]*npar[2]*/
-	  }
-#endif
 	}
 	boff += 6;
       }
