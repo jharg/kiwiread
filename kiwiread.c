@@ -218,11 +218,13 @@ struct datavol_t
 
 off_t getsector(struct sectoraddress sa)
 {
+#if 0
   printf("GetSector: %c%c%d.%d\n",
 	 sa.addr & 0x80 ? 'B' : 'A',
 	 sa.addr & 0x40 ? 'D' : 'S',
 	 sa.addr  >> 8,
 	 sa.addr & 0x3F);
+#endif
   return (sa.addr >> 8) * sector_sz + (sa.addr & 0x3F) * logical_sz;
 }
 
@@ -413,8 +415,14 @@ struct lmr_t
   uint16_t		header;       // [I:N]
   uint16_t		numbers;      // [N:N:N:N]
   uint32_t		dispflag[5];  // [N]
-  uint16_t		nblocksets;   // [N:N]
-  uint16_t		nblocks;      // [N:N]
+  struct {
+    uint8_t             lat;
+    uint8_t             lng;
+  } nblocksets;
+  struct {
+    uint8_t             lat;
+    uint8_t             lng;
+  } nblocks;
   struct {
     uint8_t             lat;
     uint8_t             lng;
@@ -531,9 +539,27 @@ struct lmr_t *findlevel(struct lmr_t *map[], int n, int lvl)
   return NULL;
 }
 
+struct mapframe_t {
+  uint16_t      size;   // [SWS]
+  struct pid_t  llpid;  // [PID]
+  uint16_t      llcode; // [N:N]
+  uint16_t      dipid;  // [N:B:N:N:N]
+  uint32_t      pmcode; // [N:B:B:B:B:B]
+};
+
+void showmap(void *map, size_t len)
+{
+  struct mapframe_t *mf = map;
+
+  printf(" @@@@ \n");
+  showpid(mf->llpid);
+  printf("\n");
+  os_dump(map, len);
+}
+
 void showalldata()
 {
-  int fd, i, fdp, j, lvl, k, bset;
+  int fd, i, fdp, j, lvl, k, bset, pt;
   struct datavol_t dv;
   struct mhr_t *mhr;
   off_t moff, cur;
@@ -648,8 +674,6 @@ void showalldata()
     swapl(&lmr->dispflag[2]);
     swapl(&lmr->dispflag[3]);
     swapl(&lmr->dispflag[4]);
-    swapw(&lmr->nblocksets);
-    swapw(&lmr->nblocks);
     swapw(&lmr->bsmr_off);
     swapw(&lmr->nrsize);
 
@@ -667,14 +691,13 @@ void showalldata()
     }
 
     lvl = extract(lmr->header, 10, 15);
-    nx[lvl] = 1+extract(lmr->nblocksets, 0, 7);
-    ny[lvl] = 1+extract(lmr->nblocksets, 8, 15);
+    nx[lvl] = 1+lmr->nblocksets.lng;
+    ny[lvl] = 1+lmr->nblocksets.lat;
 
     printf(" latlng block sets: %dx%d\n", 
 	   nx[lvl], ny[lvl]);
     printf(" latlng blocks    : %dx%d\n",
-	   1+extract(lmr->nblocks, 8, 15),
-	   1+extract(lmr->nblocks, 0, 7));
+	   1+lmr->nblocks.lng, 1+lmr->nblocks.lat);
     for (j=0; j<=3; j++) {
       printf(" latlng parcels%d : %dx%d\n", j, 1+lmr->nparcels[j].lat, 1+lmr->nparcels[j].lng);
     }
@@ -706,7 +729,7 @@ void showalldata()
       lmr = findlevel(lmrmap, pdmdh->nlmr, lvl);
       printf("  bmt_offset: %d\n", bsmr->bmt_offset * 2);
       printf("  bmt_size  : %d\n", bsmr->bmt_size * 2);
-      os_dump(zdat[0] + bsmr->bmt_offset * 2, bsmr->bmt_size * 2);
+      //os_dump(zdat[0] + bsmr->bmt_offset * 2, bsmr->bmt_size * 2);
 
       boff = 0;
       while (boff < bsmr->bmt_size * 2) {
@@ -721,7 +744,7 @@ void showalldata()
 	  poff = getsector(bmt->dsa);
 	  printf("   Parcel addr: %lx  size:%ld  off=%d\n", bmt->dsa.addr, bmt->size * logical_sz, poff);
 	  pdat = zreado(fd, bmt->size * logical_sz, poff);
-	  os_dump(pdat, bmt->size * logical_sz);
+	  //os_dump(pdat, bmt->size * logical_sz);
 
 	  poff = 0;
 	  while (poff < bmt->size*logical_sz) {
@@ -730,15 +753,15 @@ void showalldata()
 	    swapw(&pi->type);
 	    swapw(&pi->routeoff);
 
-	    bset = extract(pi->type, 8, 9);
+	    pt = extract(pi->type, 8, 9);
 	    printf("   ===================== %x\n", poff);
 	    printf("   Parcel type     : %d\n", extract(pi->type, 8, 9));
 	    printf("   Parcel list type: %d\n", extract(pi->type, 0, 7));
 	    printf("   Route Offset    : %d\n", pi->routeoff);
 
-	    k = (1+lmr->nparcels[bset].lat)*(1+lmr->nparcels[bset].lng);
+	    k = (1+lmr->nparcels[pt].lat)*(1+lmr->nparcels[pt].lng);
 	    printf("   Map count       : %dx%d = %d\n", 
-		   1+lmr->nparcels[bset].lat, 1+lmr->nparcels[bset].lng, k);
+		   1+lmr->nparcels[pt].lat, 1+lmr->nparcels[pt].lng, k);
 
 	    poff += 4;
 	    for (j=0; j<k; j++) {
@@ -752,19 +775,20 @@ void showalldata()
 	      swapw(&mi->map0.size);
 	      if (mi->map0.size) {
 		printf("    MapPar Addr: [%2d,%2d] level:%d.%d  Addr:%lx  size:%ld\n", 
-		       j / (1+lmr->nparcels[bset].lat),
-		       j % (1+lmr->nparcels[bset].lat),
-		       lvl, bset, 
+		       j / (1+lmr->nparcels[pt].lat),
+		       j % (1+lmr->nparcels[pt].lat),
+		       lvl, pt, 
 		       mi->map0.dsa.addr,
 		       mi->map0.size * logical_sz);
 		mapoff = getsector(mi->map0.dsa);
 		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
-		os_dump(mdat, mi->map0.size * logical_sz);
+		showmap(mdat, mi->map0.size * logical_sz);
+		free(mdat);
 	      } else if (mi->map0.dsa.addr != -1) {
 		printf("    MapPar Addr: [%2d,%2d] level:%d.%d  Ref :%lx\n",
-		       j / (1+lmr->nparcels[bset].lat),
-		       j % (1+lmr->nparcels[bset].lat),
-		       lvl, bset, 
+		       j / (1+lmr->nparcels[pt].lat),
+		       j % (1+lmr->nparcels[pt].lat),
+		       lvl, pt, 
 		       mi->map0.dsa.addr * 2);
 	      }
 	      poff += 6;
