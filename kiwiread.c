@@ -540,25 +540,136 @@ struct lmr_t *findlevel(struct lmr_t *map[], int n, int lvl)
   return NULL;
 }
 
+
+int min(int a, int b)
+{
+  return (a < b) ? a : b;
+}
+
+struct mfde_t {
+  uint32_t offset;
+  uint16_t size;
+} __attribute__((packed));
+
 struct mapframe_t {
-  uint16_t             size;   // [SWS]
-  struct pid_t         llpid;  // [PID]
-  uint16_t             llcode; // [N:N]
-  uint16_t             dipid;  // [N:B:N:N:N]
-  uint32_t             pmcode; // [N:B:B:B:B:B]
-  uint16_t             dsflag; // [B:B:N]
-  uint16_t             rlx;    // [B:N]
-  uint16_t             rly;    // [B:N]
+  uint16_t             size;    // [SWS]
+  struct pid_t         llpid;   // [PID]
+  uint16_t             llcode;  // [N:N]
+  uint16_t             dipid;   // [N:B:N:N:N]
+  uint32_t             pmcode;  // [N:B:B:B:B:B]
+  uint16_t             dsflag;  // [B:B:N]
+  uint16_t             rlx;     // [B:N]
+  uint16_t             rly;     // [B:N]
   uint16_t             geo_str; // [I]
   uint16_t             geo_dec; // [I]
   struct sectoraddress rg_addr; // [DSA]
-  uint16_t             rg_size;  // [BS]
+  uint16_t             rg_size; // [BS]
   uint16_t             nregion; // [N]
+  /* [VAR] Regions x4 */
+  /* [VAR] mfde_t[] */
 } __attribute__((packed));
 
-void showmap(void *map, size_t len)
+union strinfo_t
 {
+  struct {
+    uint16_t bkinfo;
+    uint16_t nx;
+    uint16_t ny;
+  } __attribute__((packed)) barystr;
+  struct {
+    uint16_t addinfo;
+    uint16_t nx;
+    uint16_t ny;
+    uint16_t loc;
+    char     str[1];
+  } __attribute__((packed)) symbstr;
+} __attribute__((packed));
+
+void dumpname(void *ptr, size_t len)
+{
+  size_t hlen = _2b(ptr) * 2;
+  int na, attr1, attr2,ab,xc,yc,st;
+
+  /* [SWS] HeaderSize
+   * [VAR] Name Data Lists
+   * [VAR] Extended Data 
+   */
+
+  /* [W] Name Data Header
+   * [W] Attr1
+   * [W] Attr2
+   * 
+   * u16 [B:B:B] AddBkgInfo
+   * u16 [N:NX]  X-Coord
+   * u16 [N:NX]  Y-Coord
+   */
+  na = _2b(ptr + hlen);
+  attr1 = _2b(ptr + hlen + 2);
+  attr2 = _2b(ptr + hlen + 4);
+  st = extract(attr1, 8, 10);
+  printf("name: gr:%d str:%d attr:%x\n", extract(na, 0, 11), st, attr2);
+  if (st == 6) {
+    char *halign[] = { "right", "left", "middle", "rsv" };
+    char *valign[] = { "above", "under", "left", "right" };
+    int loc, clen;
+    char str[256] = { 0 };
+
+    ab = _2b(ptr + hlen + 6);
+    xc = _2b(ptr + hlen + 8);
+    yc = _2b(ptr + hlen +10);
+    loc = _2b(ptr + hlen+12);
+    clen = _2b(ptr + hlen+14);
+    memcpy(str, ptr + hlen + 16, clen*2);
+    printf("      xc:%d rel:%d   yc:%d  rel:%d  h:%s  v:%s  [%s]\n",
+	   extract(xc, 0, 12), extract(xc, 13, 15),
+	   extract(yc, 0, 12), extract(yc, 13, 15),
+	   halign[extract(loc, 14, 15)], valign[extract(loc, 12, 13)],
+	   str);
+  }
+  os_dump(ptr, hlen);
+  os_dump(ptr+hlen, min(len-hlen,32));
+}
+
+void dumpbkg(void *ptr, size_t len)
+{
+  size_t hlen = _2b(ptr) * 2;
+  off_t poff, goff;
+  int i, n, b, p, j;
+
+  poff = hlen;
+  n = _2b(ptr + poff);
+
+  printf("# Background: %d\n", n);
+  //os_dump(ptr + poff, 32);
+
+  poff += 2;
+  for (i=0; i<n; i++) {
+    b = _2b(ptr + poff + 2);
+    printf(" Offset: %x\n", _2b(ptr + poff)*2);
+    printf(" Shape : %d\n", extract(b, 14, 15));
+    printf(" Height: %d\n", extract(b, 13, 13));
+    printf(" #Graph: %d\n", extract(b, 0, 11));
+
+    goff = _2b(ptr + poff)*2 + hlen;
+    p = extract(b, 0, 11);
+    for (j=0; j<p; j++) {
+      printf("  gr%d: hdr:%x scale:%x type:%x addl:%x\n",
+	     j, _2b(ptr + goff), _2b(ptr + goff + 2), _2b(ptr + goff + 4), _2b(ptr + goff + 6));
+      break;
+    }
+    poff += 4;
+  }    
+}
+
+void showmap(struct lmr_t *lmr, void *map, size_t len)
+{
+  struct mfde_t *de;
   struct mapframe_t *mf = map;
+  int nData, nExt, j, off, i;
+  void *dptr;
+
+  nData = extract(lmr->numbers, 12, 15);
+  nExt  = extract(lmr->numbers, 8, 11);
 
   swapw(&mf->size);
   swapw(&mf->llcode);
@@ -573,11 +684,16 @@ void showmap(void *map, size_t len)
   swapw(&mf->rg_size);
   swapw(&mf->nregion);
 
+  de = (void *)&mf[1] + mf->nregion * 4;
+
   printf(" @@@@ ");
   showpid(mf->llpid);
   printf("\n");
 
-
+  /* [N] Map Distribution Header
+   * [VAR] Main Map Basic Data Frame
+   * [VAR] Main Map Extended Data Frame
+   */
   printf("  size    :  %x\n", mf->size * 2);
   printf("  coord   : [%d,%d]\n", extract(mf->llcode, 0, 7), extract(mf->llcode, 8, 15));
   printf("  divintid: %d\n", extract(mf->dipid, 14, 15));
@@ -588,7 +704,31 @@ void showmap(void *map, size_t len)
   printf("  area#   : %d\n", extract(mf->pmcode, 24, 31));
   printf("  rgoff   : %x\n", mf->rg_addr.addr);
   printf("  rgsize  : %d\n", mf->rg_size);
-  os_dump(map, len);
+  printf("  nroute  : %d\n", mf->nregion);
+  //os_dump(map,mf->size * 2);
+  
+  off = 0;
+  for (i=0; i<nData; i++) {
+    swapl(&de[off].offset);
+    swapw(&de[off].size);
+    printf("  Data%d: %lx %x\n", i, de[off].offset*2, de[off].size*2);
+    if (de[off].size) {
+      dptr = map + de[off].offset*2;
+      //os_dump(map + de[off].offset*2, de[off].size*2);
+
+      if (i == 2) {
+	/* Background data */
+	dumpname(dptr, de[off].size*2);
+      }
+    }
+    off++;
+  }
+  for (i=0; i<nExt; i++) {
+    swapl(&de[off].offset);
+    swapw(&de[off].size);
+    printf("  Ext%d: %lx %x\n", i, de[off].offset*2, de[off].size*2);
+    off++;
+  }
 }
 
 /* A = blockset, N = nblocksets
@@ -861,7 +1001,7 @@ void showalldata()
 	      swapw(&mi->map0.size);
 
 	      if (mi->map0.size) {
-		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Addr:%lx  size:%ld\n", 
+		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Addr:%lx  size:%lx\n", 
 		       lvl, pt, 
 		       bset, (1+lmr->nblocksets.lng) * (1+lmr->nblocksets.lat),
 		       bc-1, (1+lmr->nblocks.lng) * (1+lmr->nblocks.lat),
@@ -874,7 +1014,7 @@ void showalldata()
 #endif
 		mapoff = getsector(mi->map0.dsa);
 		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
-		showmap(mdat, mi->map0.size * logical_sz);
+		showmap(lmr, mdat, mi->map0.size * logical_sz);
 		free(mdat);
 	      } else if (mi->map0.dsa.addr != -1) {
 		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Ref :%lx\n",
