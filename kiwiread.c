@@ -10,6 +10,7 @@
 #include <endian.h>
 #include <string.h>
 //#include <oslib.h>
+#include "bmp.h"
 
 uint16_t _2b(void *v)
 {
@@ -426,7 +427,7 @@ struct lmr_t
   struct {
     uint8_t             lat;
     uint8_t             lng;
-  } nparcels[3];
+  } nparcels[3];                      // 0 = normal, 1=pardiv1, 2=pardiv2, 3=pardiv3
   uint16_t		bsmr_off;     // [D] offset in words from zdat[0]
   uint16_t		nrsize;       // [SWS]
 } __attribute__((packed));
@@ -540,36 +541,108 @@ struct lmr_t *findlevel(struct lmr_t *map[], int n, int lvl)
 }
 
 struct mapframe_t {
-  uint16_t      size;   // [SWS]
-  struct pid_t  llpid;  // [PID]
-  uint16_t      llcode; // [N:N]
-  uint16_t      dipid;  // [N:B:N:N:N]
-  uint32_t      pmcode; // [N:B:B:B:B:B]
-};
+  uint16_t             size;   // [SWS]
+  struct pid_t         llpid;  // [PID]
+  uint16_t             llcode; // [N:N]
+  uint16_t             dipid;  // [N:B:N:N:N]
+  uint32_t             pmcode; // [N:B:B:B:B:B]
+  uint16_t             dsflag; // [B:B:N]
+  uint16_t             rlx;    // [B:N]
+  uint16_t             rly;    // [B:N]
+  uint16_t             geo_str; // [I]
+  uint16_t             geo_dec; // [I]
+  struct sectoraddress rg_addr; // [DSA]
+  uint16_t             rg_size;  // [BS]
+  uint16_t             nregion; // [N]
+} __attribute__((packed));
 
 void showmap(void *map, size_t len)
 {
   struct mapframe_t *mf = map;
 
-  if (len >= 300)
-    return;
-  printf(" @@@@ \n");
+  swapw(&mf->size);
+  swapw(&mf->llcode);
+  swapw(&mf->dipid);
+  swapl(&mf->pmcode);
+  swapw(&mf->dsflag);
+  swapw(&mf->rlx);
+  swapw(&mf->rly);
+  swapw(&mf->geo_str);
+  swapw(&mf->geo_dec);
+  swapl(&mf->rg_addr.addr);
+  swapw(&mf->rg_size);
+  swapw(&mf->nregion);
+
+  printf(" @@@@ ");
   showpid(mf->llpid);
   printf("\n");
+
+
+  printf("  size    :  %x\n", mf->size * 2);
+  printf("  coord   : [%d,%d]\n", extract(mf->llcode, 0, 7), extract(mf->llcode, 8, 15));
+  printf("  divintid: %d\n", extract(mf->dipid, 14, 15));
+  printf("  adjflag : %d\n", extract(mf->dipid, 13, 13));
+  printf("  type#   : %d\n", extract(mf->dipid, 8, 9));
+  printf("  relx.y  : %d, %d\n", 
+	 extract(mf->dipid, 4, 7), extract(mf->dipid, 0, 3));
+  printf("  area#   : %d\n", extract(mf->pmcode, 24, 31));
+  printf("  rgoff   : %x\n", mf->rg_addr.addr);
+  printf("  rgsize  : %d\n", mf->rg_size);
   os_dump(map, len);
 }
 
-void divbsmr(int lvl, int a, int n, int b, int m)
+/* A = blockset, N = nblocksets
+ * B = block,    M = nblocks
+ * C = parcel,   O = nparcels
+ */
+bitmap_t *tb;
+
+void divbsmr(int lvl, int a, int m, int b, int n, int c, int o, int color)
 {
   int x, y;
 
-  if (lvl != 2)
+  if (lvl != 0)
     return;
-  y = (a/n) + (b/m)*n;
-  x = (a%n) + (b%m)*n;
-  fprintf(stderr, "<div style=\"background-color:green; position:fixed; width: 8px; height: 8px; bottom:%dpx; left:%dpx;\"/>\n",
-	  y * 10, x * 10);
+  x = (c%o) + (b%n)*o + (a%m)*n*o;
+  y = (c/o) + (b/n)*o + (a/m)*n*o;
+
+  if (tb == NULL)
+    tb = bmp_alloc(n*m*o,n*m*o);
+  bmp_putpixel(tb, x, y, color);
 }
+
+#if 0
+void showparcel(void *pdat, int poff)
+{
+  struct parman_t *pi;
+  union mapinfo_t *mi;
+  int pt, pl, nparcels, i;
+
+  pi = pdat + poff;
+  
+  swapw(&pi->type);
+  swapw(&pi->routeoff);
+
+  pt = extract(pi->type, 8, 9);  // parcel type
+  pl = extract(pi->type, 0, 7);  // parcel list type
+  
+  poff += 4;
+  nparcels = (1+lmr->nparcels[pt].lat)*(1+lmr->nparcels[pt].lng);
+  for (i=0; i<nparcels; i++) {
+    mi = pdat + poff;
+    swapl(&mi->map0.dsa.addr);
+    swapw(&mi->map0.size);
+
+    if (mi->map0.size) {
+      /* Map node */
+    } else if (mi->map0.dsa.addr != -1) {
+      /* Reference node */
+      showparcel(pdat, mi->map0.dsa.addr * 2);
+    }
+    poff += 6;
+  }
+}
+#endif
 
 void showalldata()
 {
@@ -748,9 +821,6 @@ void showalldata()
 	struct parman_t *pi;
 	union mapinfo_t *mi;
 
-	divbsmr(lvl, bset, 1+lmr->nblocksets.lng, 
-		bc, 1+lmr->nblocks.lng);
-
 	bc++;  // matches nblocks.lat * nblocks.lng
 	bmt = (struct bmt_t *)(zdat[0] + bsmr->bmt_offset*2 + boff);
 
@@ -763,7 +833,7 @@ void showalldata()
 	  //os_dump(pdat, bmt->size * logical_sz);
 
 	  poff = 0;
-	  while (poff < bmt->size*logical_sz) {
+	  while (!poff && poff < bmt->size*logical_sz) {
 	    pi = (void *)(pdat + poff);
 
 	    swapw(&pi->type);
@@ -789,23 +859,34 @@ void showalldata()
 	      mi = (void *)(pdat + poff);
 	      swapl(&mi->map0.dsa.addr);
 	      swapw(&mi->map0.size);
+
 	      if (mi->map0.size) {
-		printf("    MapPar Addr: level:%d.%d  blockset:%d.%d parcel:%d  Addr:%lx  size:%ld\n", 
+		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Addr:%lx  size:%ld\n", 
 		       lvl, pt, 
-		       bset, bc-1,
-		       j,
+		       bset, (1+lmr->nblocksets.lng) * (1+lmr->nblocksets.lat),
+		       bc-1, (1+lmr->nblocks.lng) * (1+lmr->nblocks.lat),
+		       j,   k,
 		       mi->map0.dsa.addr,
 		       mi->map0.size * logical_sz);
+#if 0
+		if (pt == 0)
+		  divbsmr(lvl, bset, 1+lmr->nblocksets.lng, bc-1, 1+lmr->nblocks.lng, j, 1+lmr->nparcels[0].lng, RGB(0,0xFF,0));
+#endif
 		mapoff = getsector(mi->map0.dsa);
-		//mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
-		//showmap(mdat, mi->map0.size * logical_sz);
-		//free(mdat);
+		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
+		showmap(mdat, mi->map0.size * logical_sz);
+		free(mdat);
 	      } else if (mi->map0.dsa.addr != -1) {
-		printf("    MapPar Addr: level:%d.%d  blockset:%d.%d parcel:%d  Ref :%lx\n",
+		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Ref :%lx\n",
 		       lvl, pt, 
-		       bset, bc-1,
-		       j,
+		       bset, (1+lmr->nblocksets.lng)*(1+lmr->nblocksets.lat),
+		       bc-1, (1+lmr->nblocks.lng)*(1+lmr->nblocks.lat),
+		       j, k,
 		       mi->map0.dsa.addr * 2);
+#if 0
+		if (pt == 0)
+		  divbsmr(lvl, bset, 1+lmr->nblocksets.lng, bc-1, 1+lmr->nblocks.lng, j, 1+lmr->nparcels[0].lng, RGB(0xFF,0,0));
+#endif
 	      }
 	      poff += 6;
 	    }
@@ -819,6 +900,8 @@ void showalldata()
 
     moff += sizeof(*bsmr);
   }
+  if (tb)
+    bmp_write(tb, "kiwi.bmp");
   /* ASSERT: count of blocksets per level == nbsx[lvl] * nbsy[lvl] */
   exit(0);
 }
