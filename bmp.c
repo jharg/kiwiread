@@ -681,56 +681,56 @@ static void _put32(uint8_t *p, int v)
   p[3] = v >> 24;
 }
 
-static void _put16(uint8_t *p, uint16_t v)
+static void _put24(uint8_t *p, int v)
+{
+  p[0] = v;
+  p[1] = v >> 8;
+  p[2] = v >> 16;
+}
+
+static void _put16(uint8_t *p, int v)
 {
   p[0] = v;
   p[1] = v>>8;
 }
 
 #define HDRLEN 54
+#define NBYTES 4
 void bmp_write(bitmap_t *bmp, const char *file)
 {
   FILE *fp;
   int len, i, j;
   uint8_t h[HDRLEN] = { 0 };
+  uint8_t rgb[4];
 
   if ((fp = fopen(file, "w")) != NULL) {
-    len = HDRLEN + 3*bmp->w*bmp->h;
+    len = HDRLEN + NBYTES*bmp->w*bmp->h;
 
     h[0] = 'B';
     h[1] = 'M';
-    _put32(h+2, len);
-    _put32(h+0xA, HDRLEN);           // offset of bmp data
+    _put32(h+0x02, len);
+    _put32(h+0x0A, HDRLEN);          // offset of bmp data
 
-    _put32(h+0xe, 40);               // size of DIB header
+    _put32(h+0x0e, 40);              // size of DIB header
     _put32(h+0x12, bmp->w);          // width
     _put32(h+0x16, bmp->h);          // height
     _put16(h+0x1a, 1);               // planes
-    _put16(h+0x1c, 24);              // bits per pixel
-    _put32(h+0x22, 16);
-    _put32(h+0x26, 2835);
-    _put32(h+0x2a, 2835);
-
-    h[34] = 16;
-    h[36] = 0x13;
-    h[37] = 0x0b;
-    h[42] = 0x13;
-    h[43] = 0x0b;
-
+    _put16(h+0x1c, 8 * NBYTES);      // bits per pixel
+    _put32(h+0x22, 16);              // image size
+    _put32(h+0x26, 2835);            // horiz resolution (pixel per meter)
+    _put32(h+0x2a, 2835);            // vert resolution (pixel per meter)
     fwrite(h, HDRLEN, 1, fp);
 
+#if (NBYTES == 4)
+    fwrite(bmp->data, 4, bmp->w*bmp->h, fp);
+#else
     for (j=0; j<bmp->h; j++) {
       for (i=0; i<bmp->w; i++) {
-	uint8_t rgb[3];
-	int pixel;
-
-	pixel = bmp->data[i + j*bmp->w];
-	rgb[0] = pixel;
-	rgb[1] = pixel >> 8;
-	rgb[2] = pixel >> 16;
+	_put24(rgb, bmp->data[i + j*bmp->w]);
 	fwrite(rgb, 3, 1, fp);
       }
     }
+#endif
     fclose(fp);
   }
 }
@@ -894,8 +894,9 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
   if (valign == TOP)
     ty = -22;
 
-  /* Precalc Origin Translate+Rotate matrix */
+  /* Precalc origin Translate+Rotate matrix */
   tr = matxmat(T(x,y),R(ang));
+  tr = matxmat(tr,T(tx,ty));
   for (i=0; i<len; i++) {
     vec = simplex[str[i]-32];
 
@@ -903,8 +904,8 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
     v1.v[1] = -1;
     v1.v[2] = 1;
 
-    /* Calculate alignment+offset translation matrix */
-    m = matxmat(tr,T(tx+xo,ty));
+    /* Calculate per-character offset Translate matrix */
+    m = matxmat(tr,T(xo,0));
     xo += vec[1];
 
     pos = 2;   
@@ -923,14 +924,17 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
 }
 
 /* L = T(tx,ty)*S(sx,sy)*R(a)*T(-tx,-ty) */
+#ifdef BMAIN
 int main()
 {
   bitmap_t *b;
 
   b = bmp_alloc(500,500);
-  bmp_drawstring(b, 250, 250, CENTER, BOTTOM, 60, "This 0122", RGB(0xFF,0xFF,0));
+  bmp_drawstring(b, 250, 250, CENTER, TOP, 160, "This 0122", RGB(0xFF,0xFF,0));
+  bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 160, "This 0123", RGB(0xFF,0xFF,0xFF));
   bmp_line(b, 0, 250, 500, 250, RGB(0,0,0xFF));
   bmp_line(b, 250, 0, 250, 500, RGB(0,0xFF,0));
   bmp_write(b, "x.bmp");
   return 0;
 }
+#endif
