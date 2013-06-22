@@ -589,6 +589,7 @@ void dumpname(void *ptr, size_t len)
 {
   size_t hlen = _2b(ptr) * 2;
   int na, attr1, attr2,ab,xc,yc,st;
+  char slen, str[256] = { 0 };
 
   /* [SWS] HeaderSize
    * [VAR] Name Data Lists
@@ -608,18 +609,49 @@ void dumpname(void *ptr, size_t len)
   attr2 = _2b(ptr + hlen + 4);
   st = extract(attr1, 8, 10);
   printf("name: gr:%d str:%d attr:%x\n", extract(na, 0, 11), st, attr2);
-  if (st == 6) {
-    char *halign[] = { "right", "left", "middle", "rsv" };
-    char *valign[] = { "above", "under", "left", "right" };
-    int loc, clen;
-    char str[256] = { 0 };
-
+  if (st == 1) {
+    /* Barycentric */
     ab = _2b(ptr + hlen + 6);
     xc = _2b(ptr + hlen + 8);
     yc = _2b(ptr + hlen +10);
+
+    slen = _2b(ptr + hlen+12);
+    memcpy(str, ptr + hlen + 14, slen*2);
+    printf("      xc:%d rel:%d   yc:%d  rel:%d  [%s]\n",
+	   extract(xc, 0, 12), extract(xc, 13, 15),
+	   extract(yc, 0, 12), extract(yc, 13, 15),
+	   str);
+  }
+  if (st == 5) {
+    int ang;
+
+    /* Type C */
+    ab = _2b(ptr + hlen + 6);
+    xc = _2b(ptr + hlen + 8);
+    yc = _2b(ptr + hlen +10);
+
+    ang = _2b(ptr + hlen+12);
+    slen = _2b(ptr + hlen+14);
+    memcpy(str, ptr + hlen + 16, slen*2);
+    printf("      xc:%d rel:%d   yc:%d  rel:%d  angle:%x  [%s]\n",
+	   extract(xc, 0, 12), extract(xc, 13, 15),
+	   extract(yc, 0, 12), extract(yc, 13, 15),
+	   ang,
+	   str);
+  }
+  if (st == 6) {
+    char *halign[] = { "right", "left", "middle", "rsv" };
+    char *valign[] = { "above", "under", "left", "right" };
+    int loc;
+
+    /* Symbol */
+    ab = _2b(ptr + hlen + 6);
+    xc = _2b(ptr + hlen + 8);
+    yc = _2b(ptr + hlen +10);
+
     loc = _2b(ptr + hlen+12);
-    clen = _2b(ptr + hlen+14);
-    memcpy(str, ptr + hlen + 16, clen*2);
+    slen = _2b(ptr + hlen+14);
+    memcpy(str, ptr + hlen + 16, slen*2);
     printf("      xc:%d rel:%d   yc:%d  rel:%d  h:%s  v:%s  [%s]\n",
 	   extract(xc, 0, 12), extract(xc, 13, 15),
 	   extract(yc, 0, 12), extract(yc, 13, 15),
