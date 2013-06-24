@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include "bmp.h"
 #include <math.h>
+#include "bmp.h"
 
 static void *zmalloc(size_t sz)
 {
@@ -85,7 +85,7 @@ void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
 	break;
       e2 = 2*e;
       if (e2 > -dy) {
-	e -= dy;
+	e  -= dy;
 	x0 += sx;
       }
       if (x0 == x1 && y0 == y1) {
@@ -93,13 +93,14 @@ void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
 	break;
       }
       if (e2 < dx) {
-	e += dx;
+	e  += dx;
 	y0 += sy;
       }
     }
   }
 }
 
+/* Draw polygon */
 void bmp_poly(bitmap_t *bmp, int nvertex, int *xy, int rgb)
 {
   int i, off;
@@ -110,6 +111,7 @@ void bmp_poly(bitmap_t *bmp, int nvertex, int *xy, int rgb)
   bmp_line(bmp, xy[i*2], xy[i*2+1], xy[0], xy[1], rgb);
 }
 
+/* Vector font */
 int simplex[95][112] = {
     0,16, /* Ascii 32 */
    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
@@ -759,20 +761,20 @@ void bmp_write(bitmap_t *bmp, const char *file)
  * sin(a) cos(a)  0
  * 0      0       1
  */
-struct vector
+vector_t vecinit(double x, double y)
 {
-  double v[3];
-};
+  vector_t r;
 
-struct matrix
-{
-  double m[3][3];
-};
+  r.v[0] = x;
+  r.v[1] = y;
+  r.v[2] = 1;
+  return r;
+}
 
 /* Matrix x Vector */
-struct vector matxvec(struct matrix m, struct vector v)
+vector_t matxvec(matrix_t m, vector_t v)
 {
-  struct vector r;
+  vector_t r;
   int i,j;
 
   memset(&r, 0, sizeof(r));
@@ -787,10 +789,10 @@ struct vector matxvec(struct matrix m, struct vector v)
 }
 
 /* Matrix x Matrix */
-struct matrix matxmat(struct matrix a, struct matrix b)
+matrix_t matxmat(matrix_t a, matrix_t b)
 {
   int i, j, k;
-  struct matrix r;
+  matrix_t r;
 
   memset(&r, 0, sizeof(r));
   for (i=2;i>=0;i--) {
@@ -806,9 +808,9 @@ struct matrix matxmat(struct matrix a, struct matrix b)
 }
 
 /* Identity matrix */
-struct matrix I()
+matrix_t I()
 {
-  struct matrix r;
+  matrix_t r;
 
   memset(&r, 0, sizeof(r));
   r.m[0][0] = 1;
@@ -818,9 +820,9 @@ struct matrix I()
 }
 
 /* Translate matrix */
-struct matrix T(int tx, int ty)
+matrix_t T(double tx, double ty)
 {
-  struct matrix r;
+  matrix_t r;
 
   memset(&r, 0, sizeof(r));
   r.m[0][0] = 1;
@@ -832,9 +834,9 @@ struct matrix T(int tx, int ty)
 }
 
 /* Scale matrix */
-struct matrix S(double sx, double sy)
+matrix_t S(double sx, double sy)
 {
-  struct matrix r;
+  matrix_t r;
 
   memset(&r, 0, sizeof(r));
   r.m[0][0] = sx;
@@ -844,9 +846,9 @@ struct matrix S(double sx, double sy)
 }
 
 /* Rotate matrix */
-struct matrix R(int angle)
+matrix_t R(double angle)
 {
-  struct matrix r;
+  matrix_t r;
   double rad = (angle * M_PI) / 180.0;
   
   memset(&r, 0, sizeof(r));
@@ -858,14 +860,14 @@ struct matrix R(int angle)
   return r;
 }
 
-void printmat(struct matrix m)
+void printmat(matrix_t m)
 {
   int i, j;
 
   printf("mtx:\n");
   for (i=0; i<3; i++) {
     for (j=0; j<3; j++) {
-      printf("%g ", m.m[i][j]);
+      printf("%lf ", m.m[i][j]);
     }
     printf("\n");
   }
@@ -880,8 +882,8 @@ void bmp_free(bitmap_t *bmp)
 void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang, const char *str, int rgb)
 {
   int i,len,w,tx,ty,pos,j,xo,yo;
-  struct vector p0,p1,v0,v1;
-  struct matrix tr,m;
+  vector_t p0,p1,v0,v1;
+  matrix_t tr,m;
   int *vec;
 
   w = 0;

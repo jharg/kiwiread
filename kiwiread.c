@@ -12,10 +12,15 @@
 //#include <oslib.h>
 #include "bmp.h"
 
+#define _PACKED __attribute__((packed))
+#pragma pack(1)
+
 struct key_t
 {
   int key;
   const char *value;
+  const char *osm_key;
+  const char *osm_value;
 };
 
 const char *lookup(struct key_t *tab, int val)
@@ -46,6 +51,9 @@ struct key_t types[] = {
   { -1 },
 };
 
+int kt[65536];
+
+/* Decode 1,2,3,4 BigEndian bytes */
 uint8_t _1b(void *v)
 {
   return *(uint8_t *)v;
@@ -71,7 +79,6 @@ uint32_t _4b(void *v)
 
   return ((s[0] << 24) + (s[1] << 16) + (s[2] << 8) + s[3]);
 }
-
 
 int D(int v) 
 {
@@ -128,11 +135,11 @@ static void os_dump(void *b, int len)
 int sector_sz = 2048;
 int logical_sz = 32;
 
-/* ssssssss ssssssss ssssssss DLnnnnnn */
+/* 1.2.7 ssssssss ssssssss ssssssss DLnnnnnn */
 struct sectoraddress
 {
   uint32_t addr;
-}  __attribute__((packed));
+}  _PACKED;
 
 /* Fsssssss ssssssss sssssfff */
 #define LATITUDE   "NS"
@@ -155,34 +162,36 @@ void printgeo(geonum_t geo, const char *ll)
 	 (secs % (60 * 8)) / 8.0);
 }
 
+/* 1.2.13 Parcel ID */
 struct pid_t
 {
-  geonum_t lat;
-  uint8_t  exp1;
-  geonum_t lng;
-  uint8_t  exp2;
-}  __attribute__((packed));
+  geonum_t      lat;
+  uint8_t       exp1;
+  geonum_t      lng;
+  uint8_t       exp2;
+}  _PACKED;
 
+/* 1.2.14 Manufacturer ID */
 struct mid_t
 {
   struct pid_t	loc;
-  uint8_t		floor;
-  uint8_t		reserved;
+  uint8_t	floor;
+  uint8_t	reserved;
   uint16_t	date;
-} __attribute__((packed));
+} _PACKED;
 
 struct lmm_t
 {
   uint16_t 	n;
   uint16_t 	dummy;
-} __attribute__((packed));
+} _PACKED;
 
 struct sii_t
 {
   struct mid_t 	mid;
   uint16_t 	nm;
   uint16_t 	dummy;
-} __attribute__((packed));
+} _PACKED;
 
 struct mii_t
 {
@@ -190,7 +199,7 @@ struct mii_t
   uint8_t 		reserved[3];
   uint8_t 		modulename[52];
   uint8_t 		modulever[8];
-} __attribute__((packed));
+} _PACKED;
 
 struct mmi_t 	
 {
@@ -200,7 +209,7 @@ struct mmi_t
   uint8_t  		mandep[182];
   uint32_t 		addr;
   uint16_t 		size;
-} __attribute__((packed)); 
+} _PACKED; 
 
 /* LOADING.KWI
  * mii_t {
@@ -277,7 +286,7 @@ struct datavol_t
   uint8_t	res1[14];
   uint8_t	level_mgmt[256];	// level management information
   uint8_t	res2[1300];
-} __attribute__((packed));
+} _PACKED;
 
 off_t getsector(struct sectoraddress sa)
 {
@@ -444,9 +453,9 @@ struct mhr_t
   struct sectoraddress 	dsa;
   uint16_t		size;
   char			name[12];
-} __attribute__((packed));
+} _PACKED;
 
-/* Parcel Data Management Distribution Header */
+/* 6.1 Parcel Data Management Distribution Header */
 struct pdmdh_t
 {
   uint16_t		size;          // [SWS]
@@ -459,9 +468,9 @@ struct pdmdh_t
   geonum_t		left_lng;      // [B:N]
   geonum_t		right_lng;     // [B:N]
 
-  uint16_t		lmr_sz;         // [SWS] size in words
-  uint16_t		bsmr_sz;        // [SWS] size in words
-  uint16_t		bmr_sz;         // [SWS] size in words
+  uint16_t		lmr_sz;        // [SWS]
+  uint16_t		bsmr_sz;       // [SWS]
+  uint16_t		bmr_sz;        // [SWS]
 
   uint16_t		nlmr;          // [N]
   uint16_t		nbsmr;         // [N]
@@ -470,45 +479,46 @@ struct pdmdh_t
    * bsmr_t       bsmr[var];   Block Set Management Records
    * bmt_t        bmt[var];    Block Management Tables
    */
-} __attribute__((packed));
+} _PACKED;
 
-/* Level Management Record */
+/* 6.1.1 Level Management Record */
 typedef struct lmr_t
 {
-  uint16_t		header;       // [I:N]
-  uint16_t		numbers;      // [N:N:N:N]
-  uint32_t		dispflag[5];  // [N]
+  uint16_t		header;       // [I:N] level management header
+  uint16_t		numbers;      // [N:N:N:N] number of basic/ext data frames
+  uint32_t		dispflag[5];  // [N] display scale flags
   struct {
-    uint8_t             lat;
-    uint8_t             lng;
-  } __attribute__((packed)) nblocksets;
+    uint8_t             lat;          // N:N # of lat block sets
+    uint8_t             lng;          // N:N # of lng block sets
+  } _PACKED nblocksets;
   struct {
-    uint8_t             lat;
-    uint8_t             lng;
-  } __attribute__((packed)) nblocks;
+    uint8_t             lat;          // N:N # of lat blocks
+    uint8_t             lng;          // N:N # of lng blocks
+  } _PACKED nblocks;
   struct {
-    uint8_t             lat;
-    uint8_t             lng;
-  } __attribute__((packed)) nparcels[4];                      // 0 = normal, 1=pardiv1, 2=pardiv2, 3=pardiv3
-  uint16_t		bsmr_off;     // [D] offset in words from zdat[0]
-  uint16_t		nrsize;       // [SWS]
-} __attribute__((packed)) lmr_t;
+    uint8_t             lat;          // N:N # of lat (divided) parcels
+    uint8_t             lng;          // N:N # of lng (divided) parcels
+  } _PACKED nparcels[4];              // 0 = normal, 1=pardiv1, 2=pardiv2, 3=pardiv3
 
-/* Block Set Management Record */
+  uint16_t		bsmr_off;     // [D]   offset from zdat[0]
+  uint16_t		nrsize;       // [SWS] node record size
+} _PACKED lmr_t;
+
+/* 6.1.2 Block Set Management Record */
 struct bsmr_t
 {
-  uint16_t		header;        // [I:N] header
-  uint32_t		bmt_offset;    // [D]   offset in words from zdat[0]
-  uint32_t		bmt_size;      // [SWS] size in words
-} __attribute__((packed));
+  uint16_t		header;        // [I:N] header (level,blockset)
+  uint32_t		bmt_offset;    // [D]   offset to block management table from zdat[0]
+  uint32_t		bmt_size;      // [SWS] size of block management table
+} _PACKED;
 
 /* Reference Record of Parcel Management Information */
 struct bmt_t
 {
-  struct sectoraddress  dsa;           // [DSA] sector address
+  struct sectoraddress  dsa;           // [DSA] sector address or reference
   uint16_t              size;          // [BS]  size in logical sectors
   uint8_t               filename[12];  // [C]   optional
-} __attribute__((packed));
+} _PACKED;
 
 /* Parcel Management Info */
 struct parman_t
@@ -522,23 +532,23 @@ union mapinfo_t {
   struct {
     struct sectoraddress dsa;      // [DSA] sector address
     uint16_t             size;    // [BS] size in logical sectors
-  } __attribute__((packed)) map0;
+  } _PACKED map0;
   struct {
     struct sectoraddress dsa;
     uint16_t             size1;
     uint16_t             size2;
-  } __attribute__((packed)) map1;
+  } _PACKED map1;
   struct {
     struct sectoraddress dsa;
     uint16_t             size1;
     uint16_t             size2;
-  } __attribute__((packed)) map2;
+  } _PACKED map2;
   struct {
     struct sectoraddress dsa;
     uint16_t             size;
     char                 filename[12];
-  } __attribute__((packed)) map100;
-} __attribute__((packed));
+  } _PACKED map100;
+} _PACKED;
 
 /* Road Data frame
  * [var] Road Distribution Header
@@ -612,7 +622,7 @@ int min(int a, int b)
 struct mfde_t {
   uint32_t offset;
   uint16_t size;
-} __attribute__((packed));
+} _PACKED;
 
 struct mapframe_t {
   uint16_t             size;    // [SWS]
@@ -630,7 +640,7 @@ struct mapframe_t {
   uint16_t             nregion; // [N]
   /* [VAR] Regions x4 */
   /* [VAR] mfde_t[] */
-} __attribute__((packed));
+} _PACKED;
 
 void drawname(int x, int y, int ha, int va, int angle, const char *str)
 {
@@ -659,9 +669,9 @@ struct mlh_t
   uint16_t addl;
   uint16_t alti;
   uint16_t passage;
-} __attribute__((packed));
+} _PACKED;
 
-/* Road Distribution Header       mandatory
+/* 7.2.1 Road Distribution Header       mandatory
  *   [SWS]					mandatory
  *   [N] intersections				mandatory
  *   [N] # display classes[n]			mandatory
@@ -671,7 +681,7 @@ struct mlh_t
  *       [D] Offset by display class			mandatory
  *       [B:N] Number of polylines[ri]                  mandatory 
  *   [m] Additional Data Management Records	opt
- * Road Data List                 opt [n count]
+ * 7.2.2 Road Data List                 opt [n count]
  *   [B...] Display Scale Flag
  *   [ri]   Multilink Data Record
  * Passage Code Data Frame        opt
@@ -788,20 +798,22 @@ void dumpname(void *ptr, size_t len)
 
 bitmap_t *bm;
 
-// 7.3.2.2.1
+// 7.3.2.2.1 Minimum Graphics Record
 struct mingr_t
 {
-  uint16_t hdr;   // B:B:B:SWS,  headersize
-  uint16_t flag;  // B:B:B:B:B:N ncoords
-  uint16_t code;  // N           type code
-  uint16_t addl;  // B:B:B:B:N
-  uint16_t sx;    // N:NZ        starting x
-  uint16_t sy;    // N:NZ        starting y
+  uint16_t hdr;   // [B:B:B:SWS]   size
+  uint16_t flag;  // [B:B:B:B:B:N] ncoord
+  uint16_t code;  // [N]           type code
+  uint16_t addl;  // [B:B:B:B:N]   name field,auxdata
+  uint16_t sx;    // [N:NZ]        starting x
+  uint16_t sy;    // [N:NZ]        starting y
   struct {
-    int8_t xo;    // I           deltax
-    int8_t yo;    // I           deltay
-  } __attribute__((packed)) coords[1];
-} __attribute__((packed));
+    int8_t xo;    // [I]           deltax
+    int8_t yo;    // [I]           deltay
+  } _PACKED coords[1];
+  // uint16_t nameoff;
+  // uint16_t addoff;
+} _PACKED;
 
 #define ZZ -1
 void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
@@ -870,12 +882,18 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 		 extract(gr->addl, 0, 2),
 		 plen,
 		 lookup(types, gr->code));
+	  if (kt[gr->code] == 0) {
+	    kt[gr->code] = 1;
+	    fprintf(stderr, "type: %x\n", gr->code);
+	  }
 
+	  /* Check extended length of struct */
 	  xc = poff + 12 + ncoord*2;
 	  if (extract(gr->addl, 12, 12))
 	    xc+=2; // name
 	  if (extract(gr->addl, 11, 11))
 	    xc+=2; // addl
+
 	  if (xc != poff + plen) {
 	    df = stderr;
 	    os_dump(ptr + poff, plen);
@@ -890,7 +908,7 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	      printf("      [%d,%d]\n", lx, ly);
 	    }
 	    for (k=0; k<ncoord; k++) {
-	      if (_1b(ptr + poff + 12 + k*2) == 0 && _1b(ptr + poff + 12 + k*2 + 1) == 0) {
+	      if (gr->coords[k].xo == 0 && gr->coords[k].yo == 0) {
 		printf("penupdown\n");
 	      }
 	      xc = lx + gr->coords[k].xo;
@@ -1014,39 +1032,6 @@ void divbsmr(int lvl, int a, int m, int b, int n, int c, int o, int color)
   bmp_putpixel(tb, x, y, color);
 }
 
-#if 0
-void showparcel(void *pdat, int poff)
-{
-  struct parman_t *pi;
-  union mapinfo_t *mi;
-  int pt, pl, nparcels, i;
-
-  pi = pdat + poff;
-  
-  swapw(&pi->type);
-  swapw(&pi->routeoff);
-
-  pt = extract(pi->type, 8, 9);  // parcel type
-  pl = extract(pi->type, 0, 7);  // parcel list type
-  
-  poff += 4;
-  nparcels = (1+lmr->nparcels[pt].lat)*(1+lmr->nparcels[pt].lng);
-  for (i=0; i<nparcels; i++) {
-    mi = pdat + poff;
-    swapl(&mi->map0.dsa.addr);
-    swapw(&mi->map0.size);
-
-    if (mi->map0.size) {
-      /* Map node */
-    } else if (mi->map0.dsa.addr != -1) {
-      /* Reference node */
-      showparcel(pdat, mi->map0.dsa.addr * 2);
-    }
-    poff += 6;
-  }
-}
-#endif
-
 void showalldata()
 {
   int fd, i, fdp, j, lvl, k, bset, pt, bc, xt;
@@ -1129,7 +1114,12 @@ void showalldata()
       //os_dump(zdat[i], mhr[i].size * logical_sz);
     }
   }
-  /* Dump PDMR */
+  /* 6.1 Dump PDMR
+   *    Header
+   *    Level Management Records
+   *    Block Set Management Records
+   *    Block Management Tables 
+   */
   moff = sizeof(struct pdmdh_t);
   pdmdh = zdat[0];
   swapw(&pdmdh->size);
@@ -1139,6 +1129,7 @@ void showalldata()
   swapw(&pdmdh->nlmr);
   swapw(&pdmdh->nbsmr);
   swapw(&pdmdh->filename);
+
   printf("lower left:\n");
   printgeo(pdmdh->lower_lat, LATITUDE);	
   printgeo(pdmdh->left_lng,  LONGITUDE);	
@@ -1149,7 +1140,7 @@ void showalldata()
   printf("lmr_sz: %x  bsmr_sz:%x  bmr_sz:%x nlmr:%x nbsmr:%x filename:%x\n",
 	 SWS(pdmdh->lmr_sz), pdmdh->bsmr_sz, pdmdh->bmr_sz, pdmdh->nlmr, pdmdh->nbsmr, pdmdh->filename);
 
-  /* Dump level records */
+  /* 6.1.1 Dump level records */
   lmrmap = calloc(pdmdh->nlmr, sizeof(struct lmr_t *));
   for (i=0; i<pdmdh->nlmr; i++) {
     lmr = (struct lmr_t *)(zdat[0] + moff);
@@ -1199,7 +1190,7 @@ void showalldata()
     moff += SWS(pdmdh->lmr_sz);
   }
 
-  /* Dump Block Set Management Records */
+  /* 6.1.2 Dump Block Set Management Records */
   bsmrmap = calloc(pdmdh->nbsmr, sizeof(struct bsmr_t *));
   for (i=0; i<pdmdh->nbsmr; i++) {
     bsmr = (struct bsmr_t *)(zdat[0] + moff);
@@ -1216,15 +1207,12 @@ void showalldata()
     bc = 0;
     printf("---- bsmr%d: level=%2d blockset=%3d moff=%d [%dx%d]\n",
 	   i, lvl, bset, moff, 1+lmr->nblocksets.lng, 1+lmr->nblocksets.lat);
-    fprintf(stderr,"---- bsmr%d: level=%2d blockset=%3d moff=%d [%dx%d]\n",
-	   i, lvl, bset, moff, 1+lmr->nblocksets.lng, 1+lmr->nblocksets.lat);
     if (bsmr->bmt_size) {
       struct bmt_t *bmt;
       off_t boff, poff;
       void *pdat;
 
       lmr = findlevel(lmrmap, pdmdh->nlmr, lvl);
-      //os_dump(zdat[0] + bsmr->bmt_offset * 2, bsmr->bmt_size * 2);
       printf("  bmt_offset: %d\n", D(bsmr->bmt_offset));
       printf("  bmt_size  : %d\n", SWS(bsmr->bmt_size));
 
@@ -1238,7 +1226,7 @@ void showalldata()
 
 	swapl(&bmt->dsa.addr);
 	swapw(&bmt->size);
-	if (bmt->size && !lvl) {
+	if (bmt->size) {
 	  poff = getsector(bmt->dsa);
 	  printf("   Parcel addr: %lx  size:%ld  off=%d\n", bmt->dsa.addr, bmt->size * logical_sz, poff);
 	  pdat = zreado(fd, bmt->size * logical_sz, poff);
@@ -1281,9 +1269,9 @@ void showalldata()
 		       mi->map0.size * logical_sz);
 
 		mapoff = getsector(mi->map0.dsa);
-		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
-		showmap(lmr, mdat, mi->map0.size * logical_sz);
-		free(mdat);
+		//mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
+		//showmap(lmr, mdat, mi->map0.size * logical_sz);
+		//free(mdat);
 	      } else if (mi->map0.dsa.addr != -1) {
 		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Ref :%lx\n",
 		       lvl, pt, 
