@@ -28,7 +28,7 @@ bitmap_t *bmp_alloc(int w, int h)
 
 void bmp_putpixel(bitmap_t *bmp, int x, int y, int rgb)
 {
-  if (x >= bmp->w || y >= bmp->h)
+  if (x >= bmp->w || y >= bmp->h || x < 0 || y < 0)
     return;
   bmp->data[x+y*bmp->w] = rgb;
 }

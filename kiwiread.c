@@ -32,9 +32,17 @@ struct key_t types[] = {
   { 0x121, "water system (shore line,ocean,bay,sea,creek)" },
   { 0x122, "water system (lake,marsh,pond)" },
   { 0x123, "water system (river)" },
+  { 0x124, "water system (canal, irrigation canal)" },
+  { 0x128, "island" },
   { 0x132, "address level 2 (state)" },
+  { 0x140, "urban district" },
+  { 0x141, "green belt, park" },
+  { 0x142, "factory, factory site" },
   { 0x210, "road type 0" },
   { 0x211, "road type 1" },
+  { 0x242, "very high speed railway, JR line [main line]" },
+  { 0x280, "other airport" },
+  { 0x480, "hospital" },
   { -1 },
 };
 
@@ -79,27 +87,31 @@ int SWS(int v)
   return v;
 }
 
+FILE *df;
+
 static void os_dump(void *b, int len)
 {
   unsigned char *bb = (unsigned char *)b;
   int i,j,c;
-  
+
+  if (df == NULL)
+    df = stdout;
   for(i=0;i<len;i+=16) {
-    printf("%.4x: ", i);
+    fprintf(df,"%.4x: ", i);
     for(j=0;j<16;j++) {
       if (i+j >= len)
-	printf("XX ");
+	fprintf(df,"XX ");
       else
-	printf("%.02x ", bb[i+j]);
+	fprintf(df,"%.02x ", bb[i+j]);
     }
-    printf("  ");
+    fprintf(df,"  ");
     for(j=0;j<16;j++) {
       c = bb[i+j];
       if (i+j >= len || c < ' ' || c > 'z')
 	c = '.';
-      printf("%c",c);
+      fprintf(df,"%c",c);
     }
-    printf("\n");
+    fprintf(df,"\n");
   }
 }
 
@@ -554,6 +566,7 @@ int signex(uint32_t val, int start, int end)
   uint32_t mask = (1L << (end - start + 1)) - 1;
   uint32_t bits = (val >> start) & mask;
 
+  /* If upper bit is set... mask in -1 */
   if (bits & (1L << (end - start)))
     bits |= (-1L & ~mask);
   return bits;
@@ -778,19 +791,20 @@ bitmap_t *bm;
 // 7.3.2.2.1
 struct mingr_t
 {
-  uint16_t hdr;   // B:B:B:SWS, headersize
+  uint16_t hdr;   // B:B:B:SWS,  headersize
   uint16_t flag;  // B:B:B:B:B:N ncoords
-  uint16_t code;  // N
+  uint16_t code;  // N           type code
   uint16_t addl;  // B:B:B:B:N
-  uint16_t sx;    // N:NZ
-  uint16_t sy;    // N:NZ
+  uint16_t sx;    // N:NZ        starting x
+  uint16_t sy;    // N:NZ        starting y
   struct {
-    int8_t xo;    // I
-    int8_t yo;    // I
+    int8_t xo;    // I           deltax
+    int8_t yo;    // I           deltay
   } __attribute__((packed)) coords[1];
 } __attribute__((packed));
 
-void dumpbkgd(void *ptr, size_t len)
+#define ZZ -1
+void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 {
   size_t hlen = SWS(_2b(ptr)); // 7.3.1 [SWS] background distribution header size
   off_t off, poff, goff, boff;
@@ -802,13 +816,14 @@ void dumpbkgd(void *ptr, size_t len)
 
   if (bm == NULL)
     bm = bmp_alloc(5000,5000);
+  ns++;
   printf("========= Background %.4x\n", len);
   for (off=2; off<hlen; off+=4) {
     poff = D(_2b(ptr + off));         // 7.3.1.1 [D] element unit offset
     plen = SWS(_2b(ptr + off + 2));   // 7.3.1.1 [SWS] element unit size
-    printf("  Element: %.4x %.4x [%.4x]\n", poff, plen, poff+plen);
-
     if (poff != 0xFFFF) {
+      printf("  Element: %.4x %.4x [%.4x]\n", poff, plen, poff+plen);
+
       n = _2b(ptr + poff);           // 7.3.2 [N] number of background types
       printf(" #Background types: %d\n", n);
 
@@ -831,11 +846,8 @@ void dumpbkgd(void *ptr, size_t len)
 	/*  7.3.2.2 Minimum Graphics Data List */
 	memset(pts, 0, sizeof(pts));
 	for (j=0; j<p[i]; j++) {
-	  plen = SWS(extract(_2b(ptr + poff), 0, 11));
-
 	  /* 7.3.2.2.1 Minumum Graphics Data Record */
-	  gr = malloc(plen);
-	  memcpy(gr, ptr + poff, plen);
+	  gr = ptr + poff;
 	  swapw(&gr->hdr);
 	  swapw(&gr->flag);
 	  swapw(&gr->code);
@@ -845,45 +857,63 @@ void dumpbkgd(void *ptr, size_t len)
 	  
 	  plen = SWS(extract(gr->hdr, 0, 11));
 	  ncoord = extract(gr->flag, 0, 10); // 7.3.2.2.1 [N] Number of Offset Coordinates
-	  printf("    [%.4x,%.4x] gr%.2d,%.2d shape:%d #coord:%.3d type:%x addl:%x size:%.4x [%s]\n", 
+	  printf("    [%.4x,%.4x] gr%.3d,%.3d shape:%d #coord:%.3d ext:%d type:%x addl:%d if:%d name:%d aux:%d pen:%d uaf:%d mx:%d size:%.4x [%s]\n", 
 		 poff, poff+plen,
 		 i, j, t[i],
-		 ncoord, gr->code, gr->addl,
+		 ncoord, extract(gr->hdr, 13, 13), gr->code, 
+		 extract(gr->addl, 14, 15),
+		 extract(gr->addl, 13, 13),
+		 extract(gr->addl, 12, 12),
+		 extract(gr->addl, 11, 11),
+		 extract(gr->addl, 10, 10),
+		 extract(gr->addl, 9, 9),
+		 extract(gr->addl, 0, 2),
 		 plen,
 		 lookup(types, gr->code));
-	  if (poff + 12 + ncoord*2 != poff + plen) {
+
+	  xc = poff + 12 + ncoord*2;
+	  if (extract(gr->addl, 12, 12))
+	    xc+=2; // name
+	  if (extract(gr->addl, 11, 11))
+	    xc+=2; // addl
+	  if (xc != poff + plen) {
+	    df = stderr;
 	    os_dump(ptr + poff, plen);
-	    printf("mismatch size\n");
+	    fprintf(stderr,"mismatch size %.4x %.4x %d\n", poff + 12 + ncoord*2, poff + plen, extract(lmr->header, 10, 15));
 	    goto done;
 	  }
 	  if (t[i]) {
 	    lx = extract(gr->sx, 0, 12);
 	    ly = extract(gr->sy, 0, 12);
-	    printf(" RelXY = [%d,%d]\n", extract(gr->sx, 13, 15), extract(gr->sy, 13, 15));
-	    printf("      [%d,%d]\n", lx, ly);
+	    if (ns == ZZ) {
+	      printf(" RelXY = [%d,%d]\n", extract(gr->sx, 13, 15), extract(gr->sy, 13, 15));
+	      printf("      [%d,%d]\n", lx, ly);
+	    }
 	    for (k=0; k<ncoord; k++) {
 	      if (_1b(ptr + poff + 12 + k*2) == 0 && _1b(ptr + poff + 12 + k*2 + 1) == 0) {
 		printf("penupdown\n");
 	      }
 	      xc = lx + gr->coords[k].xo;
 	      yc = ly + gr->coords[k].yo;
-#if 0
-	      bmp_line(bm, lx, ly, xc, yc, 
-		       t[i] == 1 ? RGB(0xff,0,0) : RGB(0x0,0xFF,0x00));
-#endif
-	      printf("      [%d,%d]\n", xc, yc);
+	      if (ns == ZZ) {
+		bmp_line(bm, lx+700, ly+700, xc+700, yc+700, 
+			 t[i] == 1 ? RGB(0xff,0,0) : RGB(0x0,0xFF,0x00));
+		printf("      [%d,%d]\n", xc, yc);
+	      }
 	      lx = xc;
 	      ly = yc;
 	    }
 	  }
 	  poff += plen;
-	  free(gr);
 	}
       }
     }
   }
+  if (ns == ZZ)
+    goto done;
   return;
  done:
+  return;
   //bmp_write(bm, "poly.bmp");
   //bmp_free(bm);
   exit(0);
@@ -952,7 +982,7 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
 	//dumproad(dptr, SWS(de[off].size));
       }
       if (i == 1) {
-	dumpbkgd(dptr, SWS(de[off].size));
+	dumpbkgd(lmr,dptr, SWS(de[off].size));
       }
     }
     off++;
@@ -970,7 +1000,6 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
  * C = parcel,   O = nparcels
  */
 bitmap_t *tb;
-
 void divbsmr(int lvl, int a, int m, int b, int n, int c, int o, int color)
 {
   int x, y;
@@ -1187,6 +1216,8 @@ void showalldata()
     bc = 0;
     printf("---- bsmr%d: level=%2d blockset=%3d moff=%d [%dx%d]\n",
 	   i, lvl, bset, moff, 1+lmr->nblocksets.lng, 1+lmr->nblocksets.lat);
+    fprintf(stderr,"---- bsmr%d: level=%2d blockset=%3d moff=%d [%dx%d]\n",
+	   i, lvl, bset, moff, 1+lmr->nblocksets.lng, 1+lmr->nblocksets.lat);
     if (bsmr->bmt_size) {
       struct bmt_t *bmt;
       off_t boff, poff;
@@ -1194,11 +1225,11 @@ void showalldata()
 
       lmr = findlevel(lmrmap, pdmdh->nlmr, lvl);
       //os_dump(zdat[0] + bsmr->bmt_offset * 2, bsmr->bmt_size * 2);
-      printf("  bmt_offset: %d\n", bsmr->bmt_offset * 2);
-      printf("  bmt_size  : %d\n", bsmr->bmt_size * 2);
+      printf("  bmt_offset: %d\n", D(bsmr->bmt_offset));
+      printf("  bmt_size  : %d\n", SWS(bsmr->bmt_size));
 
       boff = 0;
-      while (boff < bsmr->bmt_size * 2) {
+      while (boff < SWS(bsmr->bmt_size)) {
 	struct parman_t *pi;
 	union mapinfo_t *mi;
 
@@ -1207,11 +1238,10 @@ void showalldata()
 
 	swapl(&bmt->dsa.addr);
 	swapw(&bmt->size);
-	if (bmt->size) {
+	if (bmt->size && !lvl) {
 	  poff = getsector(bmt->dsa);
 	  printf("   Parcel addr: %lx  size:%ld  off=%d\n", bmt->dsa.addr, bmt->size * logical_sz, poff);
 	  pdat = zreado(fd, bmt->size * logical_sz, poff);
-	  //os_dump(pdat, bmt->size * logical_sz);
 
 	  poff = 0;
 	  while (!poff && poff < bmt->size*logical_sz) {
@@ -1224,7 +1254,7 @@ void showalldata()
 	    printf("   ===================== %x\n", poff);
 	    printf("   Parcel type     : %d\n", extract(pi->type, 8, 9));
 	    printf("   Parcel list type: %d\n", extract(pi->type, 0, 7));
-	    printf("   Route Offset    : %d\n", pi->routeoff);
+	    printf("   Route Offset    : %d\n", D(pi->routeoff));
 
 	    k = (1+lmr->nparcels[pt].lat)*(1+lmr->nparcels[pt].lng);
 	    printf("   Map count       : %dx%d = %d\n", 
@@ -1260,7 +1290,7 @@ void showalldata()
 		       bset, (1+lmr->nblocksets.lng)*(1+lmr->nblocksets.lat),
 		       bc-1, (1+lmr->nblocks.lng)*(1+lmr->nblocks.lat),
 		       j, k,
-		       mi->map0.dsa.addr * 2);
+		       D(mi->map0.dsa.addr));
 	      }
 	      poff += 6;
 	    }
@@ -1274,9 +1304,8 @@ void showalldata()
 
     moff += sizeof(*bsmr);
   }
-  if (tb)
-    bmp_write(tb, "kiwi.bmp");
   /* ASSERT: count of blocksets per level == nbsx[lvl] * nbsy[lvl] */
+  fprintf(stderr,"done\n");
   exit(0);
 }
 
