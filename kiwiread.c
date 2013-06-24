@@ -794,7 +794,7 @@ void dumpbkgd(void *ptr, size_t len)
 {
   size_t hlen = SWS(_2b(ptr)); // 7.3.1 [SWS] background distribution header size
   off_t off, poff, goff, boff;
-  int i, n, b, p[256], t[256], j, plen, val, ncoord, xc, yc, lx, ly;
+  int i, n, b, p[256], t[256], j, plen, val, ncoord, xc, yc, lx, ly, k;
   struct mingr_t *gr;
   int pts[10000];
   static int mx,my;
@@ -831,59 +831,61 @@ void dumpbkgd(void *ptr, size_t len)
 	/*  7.3.2.2 Minimum Graphics Data List */
 	memset(pts, 0, sizeof(pts));
 	for (j=0; j<p[i]; j++) {
+	  plen = SWS(extract(_2b(ptr + poff), 0, 11));
+
 	  /* 7.3.2.2.1 Minumum Graphics Data Record */
-	  gr = (void *)ptr + poff;
-	  //swapw(&gr->hdr);
-	  //swapw(&gr->flag);
-	  //swapw(&gr->code);
-	  //swapw(&gr->addl);
-	  //swapw(&gr->sx);
-	  //swapw(&gr->sy);
+	  gr = malloc(plen);
+	  memcpy(gr, ptr + poff, plen);
+	  swapw(&gr->hdr);
+	  swapw(&gr->flag);
+	  swapw(&gr->code);
+	  swapw(&gr->addl);
+	  swapw(&gr->sx);
+	  swapw(&gr->sy);
 	  
-	  val = _2b(ptr + poff);     // 7.3.2.2.1 [B:B:B:SWS] Minimum Graphics Data Header
-	  plen = SWS(extract(val, 0, 11));
-	  xc = _2b(ptr + poff + 4);
-	  ncoord = extract(_2b(ptr + poff + 2), 0, 10); // 7.3.2.2.1 [N] Number of Offset Coordinates
+	  plen = SWS(extract(gr->hdr, 0, 11));
+	  ncoord = extract(gr->flag, 0, 10); // 7.3.2.2.1 [N] Number of Offset Coordinates
 	  printf("    [%.4x,%.4x] gr%.2d,%.2d shape:%d #coord:%.3d type:%x addl:%x size:%.4x [%s]\n", 
-		 poff, 
+		 poff, poff+plen,
 		 i, j, t[i],
-		 ncoord, _2b(ptr + poff + 4), _2b(ptr + poff + 6),
+		 ncoord, gr->code, gr->addl,
 		 plen,
-		 lookup(types, xc));
+		 lookup(types, gr->code));
 	  if (poff + 12 + ncoord*2 != poff + plen) {
 	    os_dump(ptr + poff, plen);
 	    printf("mismatch size\n");
 	    goto done;
 	  }
 	  if (t[i]) {
-	    xc = _2b(ptr + poff + 8);
-	    yc = _2b(ptr + poff + 10);
-	    lx = extract(xc, 0, 12);
-	    ly = extract(yc, 0, 12);
-	    printf(" RelXY = [%d,%d]\n", extract(xc, 13, 15), extract(yc, 13, 15));
+	    lx = extract(gr->sx, 0, 12);
+	    ly = extract(gr->sy, 0, 12);
+	    printf(" RelXY = [%d,%d]\n", extract(gr->sx, 13, 15), extract(gr->sy, 13, 15));
 	    printf("      [%d,%d]\n", lx, ly);
-	    for (j=0; j<ncoord; j++) {
-	      if (_1b(ptr + poff + 12 + j*2) == 0 && _1b(ptr + poff + 12 + j*2 + 1) == 0) {
+	    for (k=0; k<ncoord; k++) {
+	      if (_1b(ptr + poff + 12 + k*2) == 0 && _1b(ptr + poff + 12 + k*2 + 1) == 0) {
 		printf("penupdown\n");
 	      }
-	      xc = lx + (char)_1b(ptr + poff + 12 + j*2);
-	      yc = ly + (char)_1b(ptr + poff + 12 + j*2 + 1);
+	      xc = lx + gr->coords[k].xo;
+	      yc = ly + gr->coords[k].yo;
+#if 0
 	      bmp_line(bm, lx, ly, xc, yc, 
 		       t[i] == 1 ? RGB(0xff,0,0) : RGB(0x0,0xFF,0x00));
+#endif
 	      printf("      [%d,%d]\n", xc, yc);
 	      lx = xc;
 	      ly = yc;
 	    }
 	  }
 	  poff += plen;
+	  free(gr);
 	}
       }
     }
   }
   return;
  done:
-  bmp_write(bm, "poly.bmp");
-  bmp_free(bm);
+  //bmp_write(bm, "poly.bmp");
+  //bmp_free(bm);
   exit(0);
 }
 
