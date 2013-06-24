@@ -12,9 +12,42 @@
 //#include <oslib.h>
 #include "bmp.h"
 
+struct key_t
+{
+  int key;
+  const char *value;
+};
+
+const char *lookup(struct key_t *tab, int val)
+{
+  while (tab->key != -1) {
+    if (tab->key == val)
+      return tab->value;
+    tab++;
+  }
+  return "";
+}
+
+struct key_t types[] = {
+  { 0x121, "water system (shore line,ocean,bay,sea,creek)" },
+  { 0x122, "water system (lake,marsh,pond)" },
+  { 0x123, "water system (river)" },
+  { 0x132, "address level 2 (state)" },
+  { 0x210, "road type 0" },
+  { 0x211, "road type 1" },
+  { -1 },
+};
+
+uint8_t _1b(void *v)
+{
+  return *(uint8_t *)v;
+}
+
 uint16_t _2b(void *v)
 {
-  return be16toh(*(uint16_t *)v);
+  uint8_t *s = v;
+
+  return ((s[0] << 8) + s[1]);
 }
 
 uint32_t _3b(void *v)
@@ -26,7 +59,24 @@ uint32_t _3b(void *v)
 
 uint32_t _4b(void *v)
 {
-  return be32toh(*(uint32_t *)v);
+  uint8_t *s = v;
+
+  return ((s[0] << 24) + (s[1] << 16) + (s[2] << 8) + s[3]);
+}
+
+
+int D(int v) 
+{
+  if (v != 0xFFFF) 
+    v <<= 1;
+  return v;
+}
+
+int SWS(int v)
+{
+  if (v != 0xFFFF)
+    v <<= 1;
+  return v;
 }
 
 static void os_dump(void *b, int len)
@@ -336,7 +386,7 @@ void dump_mandep(int fd, void *buffer)
     printf("magic: %4s  off: %.8" PRIx32 " end: %.8" PRIx32 "\n", key, dde[i].offset * 2 + 0x800, 
 	   dde[i].length + dde[i].offset * 2 + 0x800 - 1);
 
-    mbuf = zreado(fd, dde[i].length, dde[i].offset*2 + 0x800);
+    mbuf = zreado(fd, dde[i].length, SWS(dde[i].offset) + 0x800);
     os_dump(mbuf, dde[i].length);
   }
 }
@@ -411,7 +461,7 @@ struct pdmdh_t
 } __attribute__((packed));
 
 /* Level Management Record */
-struct lmr_t
+typedef struct lmr_t
 {
   uint16_t		header;       // [I:N]
   uint16_t		numbers;      // [N:N:N:N]
@@ -419,18 +469,18 @@ struct lmr_t
   struct {
     uint8_t             lat;
     uint8_t             lng;
-  } nblocksets;
+  } __attribute__((packed)) nblocksets;
   struct {
     uint8_t             lat;
     uint8_t             lng;
-  } nblocks;
+  } __attribute__((packed)) nblocks;
   struct {
     uint8_t             lat;
     uint8_t             lng;
-  } nparcels[3];                      // 0 = normal, 1=pardiv1, 2=pardiv2, 3=pardiv3
+  } __attribute__((packed)) nparcels[4];                      // 0 = normal, 1=pardiv1, 2=pardiv2, 3=pardiv3
   uint16_t		bsmr_off;     // [D] offset in words from zdat[0]
   uint16_t		nrsize;       // [SWS]
-} __attribute__((packed));
+} __attribute__((packed)) lmr_t;
 
 /* Block Set Management Record */
 struct bsmr_t
@@ -569,128 +619,272 @@ struct mapframe_t {
   /* [VAR] mfde_t[] */
 } __attribute__((packed));
 
-union strinfo_t
+void drawname(int x, int y, int ha, int va, int angle, const char *str)
 {
-  struct {
-    uint16_t bkinfo;
-    uint16_t nx;
-    uint16_t ny;
-  } __attribute__((packed)) barystr;
-  struct {
-    uint16_t addinfo;
-    uint16_t nx;
-    uint16_t ny;
-    uint16_t loc;
-    char     str[1];
-  } __attribute__((packed)) symbstr;
+  static bitmap_t *b;
+  static int nid;
+
+  if (nid >= 12)
+    return;
+  if (b == NULL) {
+    b = bmp_alloc(5000,5000);
+  }
+  bmp_drawstring(b,x,y, 0, 0, angle, str, RGB(0xFF,0,0));
+  if (++nid == 12) {
+    bmp_write(b, "bmp.out");
+    bmp_free(b);
+    exit(0);
+  }
+}
+
+/* Multilink Header */
+struct mlh_t
+{
+  uint32_t mmh;
+  uint16_t nmh;
+  uint16_t shape;
+  uint16_t addl;
+  uint16_t alti;
+  uint16_t passage;
 } __attribute__((packed));
+
+/* Road Distribution Header       mandatory
+ *   [SWS]					mandatory
+ *   [N] intersections				mandatory
+ *   [N] # display classes[n]			mandatory
+ *   [N] # additional data[m]			mandatory
+ *   [I] level of route planning data		mandatory
+ *   [n] Display Class Management Records	opt
+ *       [D] Offset by display class			mandatory
+ *       [B:N] Number of polylines[ri]                  mandatory 
+ *   [m] Additional Data Management Records	opt
+ * Road Data List                 opt [n count]
+ *   [B...] Display Scale Flag
+ *   [ri]   Multilink Data Record
+ * Passage Code Data Frame        opt
+ * Composite Node Data Frame      opt
+ * Expansion Data                 opt
+ */
+void dumproad(void *ptr, size_t len)
+{
+  size_t hlen = _2b(ptr) * 2;
+  int ninter, ndc, nad, lvl, i, off, xoff, xsz, npoly, poff, last, j;
+
+  ninter = _2b(ptr + 2);
+  ndc = _1b(ptr + 4);
+  nad = _1b(ptr + 5);
+  lvl = _2b(ptr + 6);
+  printf("========== road %.4x inter:%d  display:%d additional:%d lvl:%d\n", len, ninter, ndc, nad, lvl);
+  os_dump(ptr, hlen);
+
+  off = 8;
+
+  /* Display Classes */
+  last  = 0xFFFF;
+  for (i=0; i<ndc; i++) {
+    xoff = D(_2b(ptr + off));
+    xsz  = _2b(ptr + off + 2);
+    npoly = extract(xsz, 0, 11);
+    off += 4;
+    if (xoff != 0xFFFF) {
+      printf("  display:%.4x  npoly:%d\n", xoff * 2, npoly);
+      for (j=0; j<npoly; j++) {
+	printf("    poly%d: %.4x  shape:%.4x additional:%.4x altitude:%.4x passage regulation:%.4x\n", j, xoff,
+	       _2b(ptr + xoff + 6)*2, 
+	       _2b(ptr + xoff + 8)*2, 
+	       _2b(ptr + xoff + 10)*2, 
+	       _2b(ptr + xoff + 12)*2);
+	last = _4b(ptr + xoff);
+	os_dump(ptr + xoff, extract(last, 0, 7)*2);
+
+	xoff += extract(last, 0, 7)*2;
+      }
+      printf("-- end %.4x\n", xoff);
+    }
+  }
+  for (i=0; i<nad; i++) {
+    xoff = D(_2b(ptr + off));
+    xsz  = SWS(_2b(ptr + off + 2));
+    off += 4;
+    if (xoff != 0xFFFF)
+      printf("  additional:%.4x  size:%d\n", xoff, xsz);
+  }
+  printf("=========== @roadend\n");
+}
 
 void dumpname(void *ptr, size_t len)
 {
-  size_t hlen = _2b(ptr) * 2;
-  int na, attr1, attr2,ab,xc,yc,st;
+  size_t hlen = SWS(_2b(ptr));
+  int na, attr1, attr2,ab,xc,yc,st,off,toff,tnum,k,ang;
   char slen, str[256] = { 0 };
 
-  /* [SWS] HeaderSize
-   * [VAR] Name Data Lists
-   * [VAR] Extended Data 
-   */
+  printf("==================== name\n");
 
-  /* [W] Name Data Header
-   * [W] Attr1
-   * [W] Attr2
-   * 
-   * u16 [B:B:B] AddBkgInfo
-   * u16 [N:NX]  X-Coord
-   * u16 [N:NX]  Y-Coord
-   */
-  na = _2b(ptr + hlen);
-  attr1 = _2b(ptr + hlen + 2);
-  attr2 = _2b(ptr + hlen + 4);
-  st = extract(attr1, 8, 10);
-  printf("name: gr:%d str:%d attr:%x\n", extract(na, 0, 11), st, attr2);
-  if (st == 1) {
-    /* Barycentric */
-    ab = _2b(ptr + hlen + 6);
-    xc = _2b(ptr + hlen + 8);
-    yc = _2b(ptr + hlen +10);
+  ab = 0;
+  for (off=2; off<hlen; off+=4) {
+    toff = D(_2b(ptr + off));
+    tnum = _2b(ptr + off + 2);
+    if (toff != 0xFFFF) {
+      printf("  %2d offset:%.4x  size:%.4x\n", (off-2)/4, toff, tnum);
+      for (k=0; k<tnum; k++) {
+	na = _2b(ptr + toff);
+	attr1 = _2b(ptr + toff + 2);
+	attr2 = _2b(ptr + toff + 4);
+	st = extract(attr1, 8, 10);
+	printf("name: gr:%d str:%d attr:%x ", extract(na, 0, 11), st, attr2);
+	toff += 6;
 
-    slen = _2b(ptr + hlen+12);
-    memcpy(str, ptr + hlen + 14, slen*2);
-    printf("      xc:%d rel:%d   yc:%d  rel:%d  [%s]\n",
-	   extract(xc, 0, 12), extract(xc, 13, 15),
-	   extract(yc, 0, 12), extract(yc, 13, 15),
-	   str);
+	xc = extract(_2b(ptr + toff + 2), 0, 12);
+	yc = extract(_2b(ptr + toff + 4), 0, 12);
+	memset(str, 0, sizeof(str));
+	if (st == 1) {
+	  /* Barycentric string */
+	  slen = _2b(ptr + toff + 6)*2;
+	  memcpy(str, ptr + toff + 8, slen);
+	  printf("  string: '%s' x:%d y:%d\n", str, xc, yc);
+	  toff += slen + 8; // string length
+	} else if (st == 6) {
+	  /* Symbol+String */
+	  slen = _2b(ptr + toff + 8)*2;
+	  memcpy(str, ptr + toff + 10, slen);
+	  printf("  string: '%s' x:%d y:%d\n", str, xc, yc);
+	  toff += slen + 10;
+	} else if (st == 5) {
+	  /* Linear-C */
+	  ang = _2b(ptr + toff + 6);
+	  slen = _2b(ptr + toff + 8)*2;
+	  memcpy(str, ptr + toff + 10, slen);
+	  printf("  string: '%s' angle:%d x:%d y:%d\n", str, extract(ang, 0, 8), xc, yc);
+	  toff += slen + 10;
+	} else if (st == 4) {
+	  /* Linear-B */
+	  xc = _2b(ptr + toff);
+	  yc = _2b(ptr + toff + 2);
+	  slen = _2b(ptr + toff + 6)*2;
+	  memcpy(str, ptr + toff + 8, slen);
+	  printf("  string: '%s' place:%d pts:%d off:%x\n", str, extract(xc, 8, 10), extract(xc, 0, 3), yc);
+	  toff += slen + 8;
+	} else {
+	  os_dump(ptr + toff, 32);
+	  exit(0);
+	}
+      }
+    }
   }
-  if (st == 5) {
-    int ang;
-
-    /* Type C */
-    ab = _2b(ptr + hlen + 6);
-    xc = _2b(ptr + hlen + 8);
-    yc = _2b(ptr + hlen +10);
-
-    ang = _2b(ptr + hlen+12);
-    slen = _2b(ptr + hlen+14);
-    memcpy(str, ptr + hlen + 16, slen*2);
-    printf("      xc:%d rel:%d   yc:%d  rel:%d  angle:%x  [%s]\n",
-	   extract(xc, 0, 12), extract(xc, 13, 15),
-	   extract(yc, 0, 12), extract(yc, 13, 15),
-	   ang,
-	   str);
-  }
-  if (st == 6) {
-    char *halign[] = { "right", "left", "middle", "rsv" };
-    char *valign[] = { "above", "under", "left", "right" };
-    int loc;
-
-    /* Symbol */
-    ab = _2b(ptr + hlen + 6);
-    xc = _2b(ptr + hlen + 8);
-    yc = _2b(ptr + hlen +10);
-
-    loc = _2b(ptr + hlen+12);
-    slen = _2b(ptr + hlen+14);
-    memcpy(str, ptr + hlen + 16, slen*2);
-    printf("      xc:%d rel:%d   yc:%d  rel:%d  h:%s  v:%s  [%s]\n",
-	   extract(xc, 0, 12), extract(xc, 13, 15),
-	   extract(yc, 0, 12), extract(yc, 13, 15),
-	   halign[extract(loc, 14, 15)], valign[extract(loc, 12, 13)],
-	   str);
-  }
-  os_dump(ptr, hlen);
-  os_dump(ptr+hlen, min(len-hlen,32));
 }
 
-void dumpbkg(void *ptr, size_t len)
+bitmap_t *bm;
+
+// 7.3.2.2.1
+struct mingr_t
 {
-  size_t hlen = _2b(ptr) * 2;
-  off_t poff, goff;
-  int i, n, b, p, j;
+  uint16_t hdr;   // B:B:B:SWS, headersize
+  uint16_t flag;  // B:B:B:B:B:N ncoords
+  uint16_t code;  // N
+  uint16_t addl;  // B:B:B:B:N
+  uint16_t sx;    // N:NZ
+  uint16_t sy;    // N:NZ
+  struct {
+    int8_t xo;    // I
+    int8_t yo;    // I
+  } __attribute__((packed)) coords[1];
+} __attribute__((packed));
 
-  poff = hlen;
-  n = _2b(ptr + poff);
+void dumpbkgd(void *ptr, size_t len)
+{
+  size_t hlen = SWS(_2b(ptr)); // 7.3.1 [SWS] background distribution header size
+  off_t off, poff, goff, boff;
+  int i, n, b, p[256], t[256], j, plen, val, ncoord, xc, yc, lx, ly;
+  struct mingr_t *gr;
+  int pts[10000];
+  static int mx,my;
+  static int ns;
 
-  printf("# Background: %d\n", n);
-  //os_dump(ptr + poff, 32);
+  if (bm == NULL)
+    bm = bmp_alloc(5000,5000);
+  printf("========= Background %.4x\n", len);
+  for (off=2; off<hlen; off+=4) {
+    poff = D(_2b(ptr + off));         // 7.3.1.1 [D] element unit offset
+    plen = SWS(_2b(ptr + off + 2));   // 7.3.1.1 [SWS] element unit size
+    printf("  Element: %.4x %.4x [%.4x]\n", poff, plen, poff+plen);
 
-  poff += 2;
-  for (i=0; i<n; i++) {
-    b = _2b(ptr + poff + 2);
-    printf(" Offset: %x\n", _2b(ptr + poff)*2);
-    printf(" Shape : %d\n", extract(b, 14, 15));
-    printf(" Height: %d\n", extract(b, 13, 13));
-    printf(" #Graph: %d\n", extract(b, 0, 11));
+    if (poff != 0xFFFF) {
+      n = _2b(ptr + poff);           // 7.3.2 [N] number of background types
+      printf(" #Background types: %d\n", n);
 
-    goff = _2b(ptr + poff)*2 + hlen;
-    p = extract(b, 0, 11);
-    for (j=0; j<p; j++) {
-      printf("  gr%d: hdr:%x scale:%x type:%x addl:%x\n",
-	     j, _2b(ptr + goff), _2b(ptr + goff + 2), _2b(ptr + goff + 4), _2b(ptr + goff + 6));
-      break;
+      poff += 2;
+      for  (i=0; i<n; i++) {
+	/* Background Type Unit */
+	boff = D(_2b(ptr + poff));    // 7.3.2.1 [D] Background unit type offset
+	val =  _2b(ptr + poff + 2);   // 7.3.2.1 [B:B:N] Shape Class+#MinGrRec
+	p[i] = extract(val, 0, 11);   // 7.3.2.1 [N] # min graphics records
+	t[i] = extract(val, 14, 15);  // 7.3.2.1 [B] Shape Class [0=point,1=line,2=poly]
+	printf("  Shape:%x height:%x #gr:%d offset:%.4x\n",
+	       extract(val, 14, 15),
+	       extract(val, 13, 13),
+	       p[i],
+	       poff+boff);
+	poff += 4;
+      }
+
+      for (i=0; i<n; i++)  {
+	/*  7.3.2.2 Minimum Graphics Data List */
+	memset(pts, 0, sizeof(pts));
+	for (j=0; j<p[i]; j++) {
+	  /* 7.3.2.2.1 Minumum Graphics Data Record */
+	  gr = (void *)ptr + poff;
+	  //swapw(&gr->hdr);
+	  //swapw(&gr->flag);
+	  //swapw(&gr->code);
+	  //swapw(&gr->addl);
+	  //swapw(&gr->sx);
+	  //swapw(&gr->sy);
+	  
+	  val = _2b(ptr + poff);     // 7.3.2.2.1 [B:B:B:SWS] Minimum Graphics Data Header
+	  plen = SWS(extract(val, 0, 11));
+	  xc = _2b(ptr + poff + 4);
+	  ncoord = extract(_2b(ptr + poff + 2), 0, 10); // 7.3.2.2.1 [N] Number of Offset Coordinates
+	  printf("    [%.4x,%.4x] gr%.2d,%.2d shape:%d #coord:%.3d type:%x addl:%x size:%.4x [%s]\n", 
+		 poff, 
+		 i, j, t[i],
+		 ncoord, _2b(ptr + poff + 4), _2b(ptr + poff + 6),
+		 plen,
+		 lookup(types, xc));
+	  if (poff + 12 + ncoord*2 != poff + plen) {
+	    os_dump(ptr + poff, plen);
+	    printf("mismatch size\n");
+	    goto done;
+	  }
+	  if (t[i]) {
+	    xc = _2b(ptr + poff + 8);
+	    yc = _2b(ptr + poff + 10);
+	    lx = extract(xc, 0, 12);
+	    ly = extract(yc, 0, 12);
+	    printf(" RelXY = [%d,%d]\n", extract(xc, 13, 15), extract(yc, 13, 15));
+	    printf("      [%d,%d]\n", lx, ly);
+	    for (j=0; j<ncoord; j++) {
+	      if (_1b(ptr + poff + 12 + j*2) == 0 && _1b(ptr + poff + 12 + j*2 + 1) == 0) {
+		printf("penupdown\n");
+	      }
+	      xc = lx + (char)_1b(ptr + poff + 12 + j*2);
+	      yc = ly + (char)_1b(ptr + poff + 12 + j*2 + 1);
+	      bmp_line(bm, lx, ly, xc, yc, 
+		       t[i] == 1 ? RGB(0xff,0,0) : RGB(0x0,0xFF,0x00));
+	      printf("      [%d,%d]\n", xc, yc);
+	      lx = xc;
+	      ly = yc;
+	    }
+	  }
+	  poff += plen;
+	}
+      }
     }
-    poff += 4;
-  }    
+  }
+  return;
+ done:
+  bmp_write(bm, "poly.bmp");
+  bmp_free(bm);
+  exit(0);
 }
 
 void showmap(struct lmr_t *lmr, void *map, size_t len)
@@ -700,6 +894,7 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
   int nData, nExt, j, off, i;
   void *dptr;
 
+  /* Basic map/Extended map numbers */
   nData = extract(lmr->numbers, 12, 15);
   nExt  = extract(lmr->numbers, 8, 11);
 
@@ -718,15 +913,15 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
 
   de = (void *)&mf[1] + mf->nregion * 4;
 
-  printf(" @@@@ ");
-  showpid(mf->llpid);
-  printf("\n");
-
   /* [N] Map Distribution Header
    * [VAR] Main Map Basic Data Frame
    * [VAR] Main Map Extended Data Frame
    */
-  printf("  size    :  %x\n", mf->size * 2);
+  printf("  size    : %x\n", mf->size * 2);
+  printf("  lat/lng : @@ ");
+  showpid(mf->llpid);
+  printf("\n");
+
   printf("  coord   : [%d,%d]\n", extract(mf->llcode, 0, 7), extract(mf->llcode, 8, 15));
   printf("  divintid: %d\n", extract(mf->dipid, 14, 15));
   printf("  adjflag : %d\n", extract(mf->dipid, 13, 13));
@@ -743,14 +938,19 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
   for (i=0; i<nData; i++) {
     swapl(&de[off].offset);
     swapw(&de[off].size);
-    printf("  Data%d: %lx %x\n", i, de[off].offset*2, de[off].size*2);
+    printf("  Data%d: %.8lx %.4x\n", i, D(de[off].offset), SWS(de[off].size));
     if (de[off].size) {
-      dptr = map + de[off].offset*2;
-      //os_dump(map + de[off].offset*2, de[off].size*2);
+      dptr = map + D(de[off].offset);
 
+      /* 0 == road data, 1 == background data, 2 == name data */
       if (i == 2) {
-	/* Background data */
-	dumpname(dptr, de[off].size*2);
+	//dumpname(dptr, SWS(de[off].size));
+      }
+      if (i == 0) {
+	//dumproad(dptr, SWS(de[off].size));
+      }
+      if (i == 1) {
+	dumpbkgd(dptr, SWS(de[off].size));
       }
     }
     off++;
@@ -758,7 +958,7 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
   for (i=0; i<nExt; i++) {
     swapl(&de[off].offset);
     swapw(&de[off].size);
-    printf("  Ext%d: %lx %x\n", i, de[off].offset*2, de[off].size*2);
+    printf("  Ext%d: %lx %x\n", i, D(de[off].offset), SWS(de[off].size));
     off++;
   }
 }
@@ -818,7 +1018,7 @@ void showparcel(void *pdat, int poff)
 
 void showalldata()
 {
-  int fd, i, fdp, j, lvl, k, bset, pt, bc;
+  int fd, i, fdp, j, lvl, k, bset, pt, bc, xt;
   struct datavol_t dv;
   struct mhr_t *mhr;
   off_t moff, cur;
@@ -916,7 +1116,7 @@ void showalldata()
   printgeo(pdmdh->upper_lat, LATITUDE);	
   printgeo(pdmdh->right_lng, LONGITUDE);	
   printf("lmr_sz: %x  bsmr_sz:%x  bmr_sz:%x nlmr:%x nbsmr:%x filename:%x\n",
-	 pdmdh->lmr_sz*2, pdmdh->bsmr_sz, pdmdh->bmr_sz, pdmdh->nlmr, pdmdh->nbsmr, pdmdh->filename);
+	 SWS(pdmdh->lmr_sz), pdmdh->bsmr_sz, pdmdh->bmr_sz, pdmdh->nlmr, pdmdh->nbsmr, pdmdh->filename);
 
   /* Dump level records */
   lmrmap = calloc(pdmdh->nlmr, sizeof(struct lmr_t *));
@@ -955,10 +1155,17 @@ void showalldata()
     for (j=0; j<=3; j++) {
       printf(" latlng parcels%d  : %dx%d\n", j, 1+lmr->nparcels[j].lat, 1+lmr->nparcels[j].lng);
     }
-    printf(" bsmroff:          : %d\n",
+    printf(" bsmroff:         : %d\n",
 	   lmr->bsmr_off * 2);
-    printf(" node record size  : %d\n", lmr->nrsize * 2);
-    moff += pdmdh->lmr_sz * 2;
+    printf(" node record size : %d\n", lmr->nrsize * 2);
+
+    xt = _2b(&lmr[1]);
+    printf(" #Road: %d\n", extract(xt, 10, 13)+1); // 7.2 Road Data Frame 1..16
+    printf(" #Back: %d\n", extract(xt, 5, 9)+1);   // 7.3 Background Data Frame 1..32
+    printf(" #Name: %d\n", extract(xt, 0, 4)+1);   // 7.4 Name Data Frame 1..32
+
+    os_dump(&lmr[1], SWS(pdmdh->lmr_sz) - sizeof(*lmr));
+    moff += SWS(pdmdh->lmr_sz);
   }
 
   /* Dump Block Set Management Records */
@@ -994,7 +1201,7 @@ void showalldata()
 	union mapinfo_t *mi;
 
 	bc++;  // matches nblocks.lat * nblocks.lng
-	bmt = (struct bmt_t *)(zdat[0] + bsmr->bmt_offset*2 + boff);
+	bmt = (struct bmt_t *)(zdat[0] + D(bsmr->bmt_offset) + boff);
 
 	swapl(&bmt->dsa.addr);
 	swapw(&bmt->size);
@@ -1040,10 +1247,7 @@ void showalldata()
 		       j,   k,
 		       mi->map0.dsa.addr,
 		       mi->map0.size * logical_sz);
-#if 0
-		if (pt == 0)
-		  divbsmr(lvl, bset, 1+lmr->nblocksets.lng, bc-1, 1+lmr->nblocks.lng, j, 1+lmr->nparcels[0].lng, RGB(0,0xFF,0));
-#endif
+
 		mapoff = getsector(mi->map0.dsa);
 		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
 		showmap(lmr, mdat, mi->map0.size * logical_sz);
@@ -1055,10 +1259,6 @@ void showalldata()
 		       bc-1, (1+lmr->nblocks.lng)*(1+lmr->nblocks.lat),
 		       j, k,
 		       mi->map0.dsa.addr * 2);
-#if 0
-		if (pt == 0)
-		  divbsmr(lvl, bset, 1+lmr->nblocksets.lng, bc-1, 1+lmr->nblocks.lng, j, 1+lmr->nparcels[0].lng, RGB(0xFF,0,0));
-#endif
 	      }
 	      poff += 6;
 	    }

@@ -100,6 +100,16 @@ void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
   }
 }
 
+void bmp_poly(bitmap_t *bmp, int nvertex, int *xy, int rgb)
+{
+  int i, off;
+  
+  for (i=0; i<nvertex-1; i++) {
+    bmp_line(bmp, xy[i*2], xy[i*2+1], xy[(i+1)*2], xy[(i+1)*2+1], rgb);
+  }
+  bmp_line(bmp, xy[i*2], xy[i*2+1], xy[0], xy[1], rgb);
+}
+
 int simplex[95][112] = {
     0,16, /* Ascii 32 */
    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
@@ -822,7 +832,7 @@ struct matrix T(int tx, int ty)
 }
 
 /* Scale matrix */
-struct matrix S(int sx, int sy)
+struct matrix S(double sx, double sy)
 {
   struct matrix r;
 
@@ -869,13 +879,13 @@ void bmp_free(bitmap_t *bmp)
 
 void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang, const char *str, int rgb)
 {
-  int i,len,w,tx,ty,pos,j,xo;
+  int i,len,w,tx,ty,pos,j,xo,yo;
   struct vector p0,p1,v0,v1;
   struct matrix tr,m;
   int *vec;
 
   w = 0;
-  xo = 0;
+  yo = xo = 0;
   len = strlen(str);
 
   /* Calculate total width of string */
@@ -896,7 +906,7 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
 
   /* Precalc origin Translate+Rotate matrix */
   tr = matxmat(T(x,y),R(ang));
-  tr = matxmat(tr,T(tx,ty));
+  tr = matxmat(tr,S(0.5,0.5));
   for (i=0; i<len; i++) {
     vec = simplex[str[i]-32];
 
@@ -905,8 +915,9 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
     v1.v[2] = 1;
 
     /* Calculate per-character offset Translate matrix */
-    m = matxmat(tr,T(xo,0));
+    m = matxmat(tr,T(tx+xo,ty+yo));
     xo += vec[1];
+    //yo -= 24;
 
     pos = 2;   
     for (j=0; j<vec[0]; j++) {
@@ -925,16 +936,76 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
 
 /* L = T(tx,ty)*S(sx,sy)*R(a)*T(-tx,-ty) */
 #ifdef BMAIN
+#define drawme(s,x,y) bmp_drawstring(b,x,y,LEFT,BOTTOM,0,s,RGB(0xFF,0xFF,0))
 int main()
 {
   bitmap_t *b;
-
+  int poly[] = { 10,0,50,10,40,50,0,40 };
+#if 1
   b = bmp_alloc(500,500);
-  bmp_drawstring(b, 250, 250, CENTER, TOP, 160, "This 0122", RGB(0xFF,0xFF,0));
-  bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 160, "This 0123", RGB(0xFF,0xFF,0xFF));
   bmp_line(b, 0, 250, 500, 250, RGB(0,0,0xFF));
   bmp_line(b, 250, 0, 250, 500, RGB(0,0xFF,0));
+  //bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 0, "ABCDEFGHIJKLMNOP", RGB(0xFF,0xFF,0));
+  //bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 160, "0123456789", RGB(0xFF,0xFF,0xFF));
+  bmp_poly(b, 4, poly, RGB(0xff, 0, 0xFF));
   bmp_write(b, "x.bmp");
+#else
+  b = bmp_alloc(5000,5000);
+drawme("YOAKUM",3785,3963);
+drawme("FULTON",4011,192);
+drawme("GANADO",991,3201);
+drawme("SWEENY",2665,3190);
+drawme("BONNEY",3172,4058);
+drawme("PREMONT",1795,2134);
+drawme("REFUGIO",3532,939);
+drawme("BAYSIDE",3656,294);
+drawme("LA WARD",1096,2594);
+drawme("WHARTON",1844,4056);
+drawme("SOMERSET",700,3766);
+drawme("DRISCOLL",2555,3089);
+drawme("BEEVILLE",2561,1235);
+drawme("ROBSTOWN",2735,3449);
+drawme("NORDHEIM",2849,2830);
+drawme("YORKTOWN",3067,3014);
+drawme("PORTLAND",3442,3732);
+drawme("AUSTWELL",323,1197);
+drawme("SEADRIFT",590,1275);
+drawme("EL CAMPO",1458,3741);
+drawme("PALACIOS",1605,2154);
+drawme("BAY CITY",2110,3019);
+drawme("ANGLETON",3210,3577);
+drawme("FREEPORT",3390,2916);
+drawme("CHARLOTTE",602,2648);
+drawme("CHRISTINE",1033,2437);
+drawme("BENAVIDES",1211,2863);
+drawme("ELMENDORF",1362,3859);
+drawme("SAN DIEGO",1557,3371);
+drawme("STOCKDALE",2129,3798);
+drawme("LAKE CITY",2278,226);
+drawme("WOODSBORO",3439,732);
+drawme("LIVERPOOL",3518,3997);
+drawme("JOURDANTON",929,2822);
+drawme("FALFURRIAS",1752,1724);
+drawme("FALLS CITY",1984,3027);
+drawme("AGUA DULCE",2230,3425);
+drawme("FLORESVILLE",1727,3480);
+drawme("GEORGE WEST",1810,1016);
+drawme("KARNES CITY",2266,2737);
+drawme("PORT LAVACA",770,1892);
+drawme("THREE RIVERS",1680,1443);
+drawme("ORANGE GROVE",2175,3964);
+drawme("ARANSAS PASS",3791,3800);
+drawme("PORT ARANSAS",3957,3591);
+drawme("OYSTER CREEK",3424,3079);
+drawme("POINT COMFORT",915,2097);
+drawme("WEST COLUMBIA",2777,3512);
+drawme("VICTORIA",4088,2475);
+drawme("KINGSVILLE",2344,2608);
+drawme("LAKE JACKSON",3181,3177);
+drawme("CORPUS CHRISTI",3269,3470);
+  bmp_write(b, "x.bmp");
+#endif
+
   return 0;
 }
 #endif
