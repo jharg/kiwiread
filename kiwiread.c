@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/mman.h>
 #include <inttypes.h>
 #include <time.h>
@@ -39,7 +41,9 @@ struct key_t types[] = {
   { 0x123, "water system (river)" },
   { 0x124, "water system (canal, irrigation canal)" },
   { 0x128, "island" },
+  { 0x131, "address level 1 (country)" },
   { 0x132, "address level 2 (state)" },
+  { 0x134, "address level 4 (municipality)" },
   { 0x140, "urban district" },
   { 0x141, "green belt, park" },
   { 0x142, "factory, factory site" },
@@ -47,7 +51,13 @@ struct key_t types[] = {
   { 0x211, "road type 1" },
   { 0x242, "very high speed railway, JR line [main line]" },
   { 0x280, "other airport" },
+  { 0x408, "cemetery" },
+  { 0x43c, "national defense facility, base" },
+  { 0x464, "university, college" },
   { 0x480, "hospital" },
+  { 0x520, "other sports facility" },
+  { 0x620, "other shopping facility" },
+  { 0x6180, "golf course" },
   { -1 },
 };
 
@@ -1047,6 +1057,7 @@ void showalldata()
   fd = open("/media/ALLDATA.KWI", O_LARGEFILE|O_RDONLY);
   if (fd < 0)
     return;
+
   read(fd, &dv, sizeof(dv));
   swapw(&dv.spec_mid.date);
   swapw(&dv.data_mid.date);
@@ -1260,7 +1271,7 @@ void showalldata()
 	      swapw(&mi->map0.size);
 
 	      if (mi->map0.size) {
-		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Addr:%lx  size:%lx\n", 
+		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Addr:%x  size:%x\n", 
 		       lvl, pt, 
 		       bset, (1+lmr->nblocksets.lng) * (1+lmr->nblocksets.lat),
 		       bc-1, (1+lmr->nblocks.lng) * (1+lmr->nblocks.lat),
@@ -1269,11 +1280,11 @@ void showalldata()
 		       mi->map0.size * logical_sz);
 
 		mapoff = getsector(mi->map0.dsa);
-		//mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
-		//showmap(lmr, mdat, mi->map0.size * logical_sz);
-		//free(mdat);
+		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
+		showmap(lmr, mdat, mi->map0.size * logical_sz);
+		free(mdat);
 	      } else if (mi->map0.dsa.addr != -1) {
-		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Ref :%lx\n",
+		printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Ref :%x\n",
 		       lvl, pt, 
 		       bset, (1+lmr->nblocksets.lng)*(1+lmr->nblocksets.lat),
 		       bc-1, (1+lmr->nblocks.lng)*(1+lmr->nblocks.lat),
