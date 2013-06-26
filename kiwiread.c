@@ -157,6 +157,8 @@ struct sectoraddress
 
 typedef uint8_t geonum_t[3];
 
+double _lx,_ly,_rx,_ry, _mx, _my;
+
 double geo_secs(geonum_t geo)
 {
   int32_t v,flag,secs;
@@ -363,10 +365,20 @@ void *zread(int fd, int sz)
   return ptr;
 }
 
-void *zreado(int fd, int sz, off_t off)
+size_t nm;
+
+void zfree(void *p, size_t sz)
+{
+  nm -= sz;
+  free(p);
+}
+
+void *zreado(int fd, size_t sz, off_t off, char *lbl)
 {
   void *ptr;
 
+  nm += sz;
+  fprintf(stderr, "sz = %d:%s %ld\n", sz, lbl, nm);
   ptr = zmalloc(sz);
   pread(fd, ptr, sz, off);
   return ptr;	
@@ -419,9 +431,9 @@ void dump_mandep(int fd, void *buffer)
     printf("magic: %4s  off: %.8" PRIx32 " end: %.8" PRIx32 "\n", key, dde[i].offset * 2 + 0x800, 
 	   dde[i].length + dde[i].offset * 2 + 0x800 - 1);
 
-    mbuf = zreado(fd, dde[i].length, SWS(dde[i].offset) + 0x800);
+    mbuf = zreado(fd, dde[i].length, SWS(dde[i].offset) + 0x800, "mandep");
     os_dump(mbuf, dde[i].length);
-    free(mbuf);
+    zfree(mbuf, dde[i].length);
   }
 }
 
@@ -665,7 +677,7 @@ void drawname(int x, int y, int ha, int va, int angle, const char *str)
   if (nid >= 12)
     return;
   if (b == NULL) {
-    b = bmp_alloc(5000,5000);
+    b = bmp_alloc(1000,1000);
   }
   bmp_drawstring(b,x,y, 0, 0, angle, str, RGB(0xFF,0,0));
   if (++nid == 12) {
@@ -927,14 +939,12 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
   struct mingr_t *gr;
   int pts[10000];
 
-  if (bm == NULL)
-    bm = bmp_alloc(5000,5000);
-  printf("========= Background %.4x\n", len);
+  //printf("========= Background %.4x\n", len);
   for (off=2; off<hlen; off+=4) {
     poff = D(_2b(ptr + off));         // 7.3.1.1 [D] element unit offset
     plen = SWS(_2b(ptr + off + 2));   // 7.3.1.1 [SWS] element unit size
     if (poff != 0xFFFF) {
-      printf("  Element: %.4x %.4x [%.4x]\n", poff, plen, poff+plen);
+      //printf("  Element: %.4x %.4x [%.4x]\n", poff, plen, poff+plen);
 
       n = _2b(ptr + poff);           // 7.3.2 [N] number of background types
       poff += 2;
@@ -950,7 +960,7 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	val =  _2b(ptr + poff + 2);   // 7.3.2.1 [B:B:N] Shape Class+#MinGrRec
 	p[i] = extract(val, 0, 11);   // 7.3.2.1 [N] # min graphics records
 	t[i] = extract(val, 14, 15);  // 7.3.2.1 [B] Shape Class [0=point,1=line,2=poly]
-	printf("  Shape:%x height:%x #gr:%d offset:%.4x\n",
+	printf("     Shape:%x height:%x #gr:%d offset:%.4x\n",
 	       extract(val, 14, 15),
 	       extract(val, 13, 13),
 	       p[i],
@@ -991,7 +1001,7 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	  plen = SWS(extract(gr->hdr, 0, 11));
 	  ncoord = extract(gr->flag, 0, 10); // 7.3.2.2.1 [N] Number of Offset Coordinates (0..2047)
 	  mconst = 1L << extract(gr->addl, 0, 2);
-	  printf("    lvl:%2d gr%.3d,%.3d shape:%d #coord:%.4d type:%.4x addl:%.4x rel:%2x,%2x [%s]\n", 
+	  printf("      lvl:%2d gr%.3d,%.3d shape:%d #coord:%.4d type:%.4x addl:%.4x rel:%2x,%2x [%s]\n", 
 		 extract(lmr->header, 10, 15),
 		 i, j, t[i],
 		 ncoord, gr->code, gr->addl,
@@ -1016,6 +1026,9 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	    for (k=0; k<ncoord; k++) {
 	      xc = lx + gr->coords[k].xo * mconst;
 	      yc = ly + gr->coords[k].yo * mconst;
+
+	      writeline(lx,ly,xc,yc, gr->code);
+
 	      lx = xc;
 	      ly = yc;
 	    }
@@ -1027,14 +1040,94 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
   }
 }
 
+int xx[] = { RGB(0xFF,0,0), 0, 
+	     RGB(0x0,0xFF,0), 0,
+	     RGB(0,0,0xFF), 0,
+	     RGB(0xFF,0xFF,0),0,
+	     RGB(0xFF,0,0xFF),0,
+	     RGB(0x0,0xFF,0xFF),0,
+	     RGB(0xFF,0xFF,0xFF),0
+};
+
+void writebox(double ly, double lx, double wy, double wx, int lvl)
+{
+  static matrix_t  m;
+  vector_t ll,ur;
+
+  if (bm == NULL) {
+    bm =  bmp_alloc(1000,1000);
+    m  = matxmat(S(1000/(_rx-_lx),1000/(_ry-_ly)),T(-_lx,-_ly));
+  }
+  ll = matxvec(m, vecinit(lx,ly));
+  ur = matxvec(m, vecinit(lx+wx,ly+wy));
+  bmp_rect(bm, ll.v[0], ll.v[1], ur.v[0], ur.v[1], xx[lvl]);
+#if 0
+  fprintf(stderr, "<Polygon><outerBoundaryIs><LinearRing><coordinates>\n");
+  fprintf(stderr, " %lf,%lf,0,\n",ly,lx);
+  fprintf(stderr, " %lf,%lf,0,\n",ly+wy,lx);
+  fprintf(stderr, " %lf,%lf,0,\n",ly+wy,lx+wx);
+  fprintf(stderr, " %lf,%lf,0,\n",ly,lx+wx);
+  fprintf(stderr, "</coordinates></LinearRing></outerBoundaryIs></Polygon>\n");
+#endif
+}
+
+void writeline(int x0, int y0, int x1, int y1, int type)
+{
+  matrix_t  m;
+  vector_t ll,ur;
+  int clr;
+
+  switch (type) {
+  case 0x121:
+  case 0x122:
+  case 0x123:
+  case 0x124:
+    clr = RGB(0,0,0xFF);
+    return;
+    break;
+  case 0x128:
+    clr = RGB(0,0xFF,0);
+    break;
+  case 0x131:
+    clr = RGB(0x40,0x40,0x40);
+    break;
+  case 0x132:
+    clr = RGB(0x80,0x80,0x80);
+    break;
+  case 0x134:
+    clr = RGB(0xc0,0xc0,0xc0);
+    break;
+  case 0x140:
+  case 0x141:
+    clr =  RGB(0,0xFF,0);
+    break;
+  case 0x210:
+  case 0x211:
+    clr = RGB(0xFF,0,0);
+    break;
+  default:
+    clr = RGB(0xff,0xff,0xff);
+    break;
+  }
+  if (bm == NULL) {
+    bm = bmp_alloc(2000,2000);
+  }
+  m  = matxmat(S(2000/4096.0,2000/4096.0),T(-_lx,-_ly));
+  ll = matxvec(m, vecinit(_mx+x0,_my+y0));
+  ur = matxvec(m, vecinit(_mx+x1,_my+y1));
+  bmp_line(bm, ll.v[0], ll.v[1], ur.v[0], ur.v[1], clr);
+}
+
 void showmap(struct lmr_t *lmr, void *map, size_t len)
 {
   struct mfde_t *de;
   struct mapframe_t *mf = map;
   int nData, nExt, j, off, i;
   void *dptr;
+  int nx, ny, lvl;
 
   /* Basic map/Extended map numbers */
+  lvl = extract(lmr->header, 10, 15);
   nData = extract(lmr->numbers, 12, 15);
   nExt  = extract(lmr->numbers, 8, 11);
 
@@ -1053,15 +1146,28 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
 
   de = (void *)&mf[1] + mf->nregion * 4;
 
+  nx = (1+lmr->nblocksets.lng)*(1+lmr->nblocks.lng)*(1+lmr->nparcels[0].lng);
+  ny = (1+lmr->nblocksets.lat)*(1+lmr->nblocks.lat)*(1+lmr->nparcels[0].lat);
+
   /* [N] Map Distribution Header
    * [VAR] Main Map Basic Data Frame
    * [VAR] Main Map Extended Data Frame
    */
-  printf("  lat/lng : @@ lvl:%2d ", extract(lmr->header, 10, 15));
+  printf("    ==== [%d,%d] lat/lng : @@ lvl:%2d ", 
+	 extract(mf->llcode, 0, 7),
+	 extract(mf->llcode, 8, 15),
+	 lvl);
   showpid(mf->llpid);
-  printf("\n");
-
-  printf("  coord   : [%d,%d]\n", extract(mf->llcode, 0, 7), extract(mf->llcode, 8, 15));
+  printf(" to ");
+  printf("%lf,%lf\n",
+	 geo_secs(mf->llpid.lat) + (_ry-_ly)/ny,
+	 geo_secs(mf->llpid.lng) + (_rx-_lx)/nx);
+  if (isin(30.2669, -97.7428, geo_secs(mf->llpid.lat), (_ry-_ly)/ny, geo_secs(mf->llpid.lng), (_rx-_lx)/nx)) {
+    printf(" @@ AUSTIN\n");
+  }
+  _mx = geo_secs(mf->llpid.lng);
+  _my = geo_secs(mf->llpid.lat);
+#if 0
   printf("  divintid: %d\n", extract(mf->dipid, 14, 15));
   printf("  adjflag : %d\n", extract(mf->dipid, 13, 13));
   printf("  type#   : %d\n", extract(mf->dipid, 8, 9));
@@ -1071,13 +1177,13 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
   printf("  rgoff   : %x\n", mf->rg_addr.addr);
   printf("  rgsize  : %d\n", mf->rg_size);
   printf("  nroute  : %d\n", mf->nregion);
-  //os_dump(map,mf->size * 2);
-  
+#endif
+
   off = 0;
   for (i=0; i<nData; i++) {
     swapl(&de[off].offset);
     swapw(&de[off].size);
-    printf("  Data%d: %.8x %.4x\n", i, D(de[off].offset), SWS(de[off].size));
+    //printf("  Data%d: %.8x %.4x\n", i, D(de[off].offset), SWS(de[off].size));
     if (de[off].size) {
       dptr = map + D(de[off].offset);
 
@@ -1097,7 +1203,7 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
   for (i=0; i<nExt; i++) {
     swapl(&de[off].offset);
     swapw(&de[off].size);
-    printf("  Ext%d: %x %x\n", i, D(de[off].offset), SWS(de[off].size));
+    //printf("  Ext%d: %x %x\n", i, D(de[off].offset), SWS(de[off].size));
     off++;
   }
 }
@@ -1121,9 +1227,14 @@ void divbsmr(int lvl, int a, int m, int b, int n, int c, int o, int color)
   bmp_putpixel(tb, x, y, color);
 }
 
+int isin(double y, double x, double ly, double lx, double dy, double dx)
+{
+  return (y >= ly && y <= (ly+dy) && x >= lx && x <= (lx+dx));
+}
+
 void showalldata()
 {
-  int fd, i, fdp, j, lvl, k, bset, pt, bc, xt;
+  int fd, i, fdp, j, lvl, k, bset, pt, bc, xt, l;
   struct datavol_t dv;
   struct mhr_t *mhr;
   off_t moff, cur;
@@ -1200,7 +1311,7 @@ void showalldata()
     printf("  Addr:%.8" PRIx32 " Size:%.4x  Name:'%s'\n", mhr[i].dsa.addr, mhr[i].size, name);
     if (mhr[i].name[0] == 0 && mhr[i].dsa.addr != -1) {
       moff = getsector(mhr[i].dsa);
-      zdat[i] = zreado(fd, mhr[i].size * logical_sz, moff);
+      zdat[i] = zreado(fd, mhr[i].size * logical_sz, moff, "mhr");
       //os_dump(zdat[i], mhr[i].size * logical_sz);
     }
   }
@@ -1231,8 +1342,20 @@ void showalldata()
   printf(" ");
   printgeo(pdmdh->right_lng, LONGITUDE);
 
+  _lx = geo_secs(pdmdh->left_lng);
+  _rx = geo_secs(pdmdh->right_lng);
+  _ly = geo_secs(pdmdh->lower_lat);
+  _ry = geo_secs(pdmdh->upper_lat);
+
   printf("\nlmr_sz: %x  bsmr_sz:%x  bmr_sz:%x nlmr:%x nbsmr:%x filename:%x\n",
          SWS(pdmdh->lmr_sz), pdmdh->bsmr_sz, pdmdh->bmr_sz, pdmdh->nlmr, pdmdh->nbsmr, pdmdh->filename);
+  if (isin(30.2669, -97.7428, _ly, _lx, _ry-_ly, _rx-_lx)) {
+    printf("@@@ AUSTIN\n");
+  }
+  for (i=1;i<=64;i<<=1) {
+    printf("%2d: nx=%lf  ny=%lf\n",
+	   i, (_rx-_lx)/i, (_ry-_ly)/i);
+  }
 
   /* 6.1.1 Dump level records */
   lmrmap = calloc(pdmdh->nlmr, sizeof(struct lmr_t *));
@@ -1303,7 +1426,7 @@ void showalldata()
            i, lvl, bset, 1+lmr->nblocksets.lng, 1+lmr->nblocksets.lat);
     if (bsmr->bmt_size) {
       struct bmt_t *bmt;
-      off_t boff, poff;
+      off_t boff, poff, toff;
       void *pdat;
 
       lmr = findlevel(lmrmap, pdmdh->nlmr, lvl);
@@ -1312,6 +1435,7 @@ void showalldata()
       while (boff < SWS(bsmr->bmt_size)) {
         struct parman_t *pi;
         union mapinfo_t *mi;
+	int *ip;
 
         bc++;  // matches nblocks.lat * nblocks.lng
         bmt = (struct bmt_t *)(zdat[0] + D(bsmr->bmt_offset) + boff);
@@ -1320,7 +1444,7 @@ void showalldata()
         swapw(&bmt->size);
         if (bmt->size) {
           poff = getsector(bmt->dsa);
-          pdat = zreado(fd, bmt->size * logical_sz, poff);
+          pdat = zreado(fd, bmt->size * logical_sz, poff, "pdat");
 
           poff = 0;
           while (!poff && poff < bmt->size*logical_sz) {
@@ -1331,37 +1455,58 @@ void showalldata()
 
             pt = extract(pi->type, 8, 9);
             k = (1+lmr->nparcels[pt].lat)*(1+lmr->nparcels[pt].lng);
-            printf("   Parcel type %d listtype:%d offset:%x map:%dx%d = %d\n", 
+            printf("   Parcel type %d listtype:%d offset:%x map:%dx%d = %d [%dx%d]\n", 
                    extract(pi->type, 8, 9),
                    extract(pi->type, 0, 7),
                    D(pi->routeoff),
                    1+lmr->nparcels[pt].lat,
                    1+lmr->nparcels[pt].lng,
-                   k);
-
+                   k,
+		   (1+lmr->nblocksets.lng)*(1+lmr->nblocks.lng)*(1+lmr->nparcels[0].lng),
+		   (1+lmr->nblocksets.lat)*(1+lmr->nblocks.lat)*(1+lmr->nparcels[0].lat));
             poff += 4;
+
+	    ip = zmalloc(sizeof(int)*k);
+	    for (j=0; j<k; j++) {
+	      uint32_t add,size,l;
+
+	      add  = _4b(pdat + poff + j*6);
+	      size = _2b(pdat + poff + j*6 + 4);
+	      if (!ip[j] && add != 0xffffffff && size) {
+		ip[j] =  j+1;
+		for (l=j+1; l<k; l++) {
+		  if (add == _4b(pdat + poff + l*6)) {
+		    ip[l] = j+1;
+		  }
+		}
+	      }
+	      printf("   [%3d,%3d] Add: %.8x  Size:%.4x ip:%d\n", 
+		       j % (1+lmr->nparcels[pt].lat), 
+		     j / (1+lmr->nparcels[pt].lat), 
+		     add, size, ip[j]);
+	    }
             for (j=0; j<k; j++) {
               void *mdat;
               off_t mapoff;
 
-              if (poff > bmt->size * logical_sz)
+              if (poff > bmt->size * logical_sz) {
+		fprintf(stderr,"boooo\n");
                 break;
+	      }
               mi = (void *)(pdat + poff);
               swapl(&mi->map0.dsa.addr);
               swapw(&mi->map0.size);
-
+#if 0	      
               if (mi->map0.size) {
                 printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d\n",
                        lvl, pt, 
                        bset, (1+lmr->nblocksets.lng) * (1+lmr->nblocksets.lat),
                        bc-1, (1+lmr->nblocks.lng) * (1+lmr->nblocks.lat),
                        j,   k);
-                if (lvl) {
-                  mapoff = getsector(mi->map0.dsa);
-                  mdat = zreado(fd, mi->map0.size * logical_sz, mapoff);
-                  showmap(lmr, mdat, mi->map0.size * logical_sz);
-                  free(mdat);
-                }
+		mapoff = getsector(mi->map0.dsa);
+		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff, "map");
+		showmap(lmr, mdat, mi->map0.size * logical_sz);
+		zfree(mdat, mi->map0.size * logical_sz);
               } else if (mi->map0.dsa.addr != -1) {
                 printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Ref :%x\n",
                        lvl, pt, 
@@ -1370,14 +1515,16 @@ void showalldata()
                        j, k,
                        D(mi->map0.dsa.addr));
               }
+#endif
               poff += 6;
             }
+	    zfree(ip,sizeof(int)*k);
           }
         }
         boff += 6;
       }
       /* ASSERT: Number of blocks per blockset == nbx[lvl] * nby[lvl] */
-      printf("BlockSet Count %d = %d\n", lvl, bc);
+      //printf("BlockSet Count %d = %d\n", lvl, bc);
     }
 
     moff += sizeof(*bsmr);

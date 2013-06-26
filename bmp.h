@@ -29,6 +29,7 @@ void bmp_write(bitmap_t *bmp, const char *file);
 void bmp_free(bitmap_t *bmp);
 void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang, const char *str, int rgb);
 
+void bmp_rect(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb);
 void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb);
 void bmp_poly(bitmap_t *bmp, int nvertex, int *xy, int rgb);
 

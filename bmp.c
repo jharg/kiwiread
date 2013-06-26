@@ -58,6 +58,14 @@ void bmp_vline(bitmap_t *bmp, int x0, int y0, int y1, int rgb)
     bmp_putpixel(bmp, x0, y0++, rgb);
 }
 
+void bmp_rect(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
+{
+  bmp_hline(bmp, x0, x1, y0, rgb);
+  bmp_hline(bmp, x0, x1, y1, rgb);
+  bmp_vline(bmp, x0, y0, y1, rgb);
+  bmp_vline(bmp, x1, y0, y1, rgb);
+}
+
 void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
 {
   int dx, dy, sx, sy, e, e2;
