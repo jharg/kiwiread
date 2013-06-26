@@ -1496,17 +1496,19 @@ void showalldata()
               mi = (void *)(pdat + poff);
               swapl(&mi->map0.dsa.addr);
               swapw(&mi->map0.size);
-#if 0	      
+
               if (mi->map0.size) {
                 printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d\n",
                        lvl, pt, 
                        bset, (1+lmr->nblocksets.lng) * (1+lmr->nblocksets.lat),
                        bc-1, (1+lmr->nblocks.lng) * (1+lmr->nblocks.lat),
                        j,   k);
-		mapoff = getsector(mi->map0.dsa);
-		mdat = zreado(fd, mi->map0.size * logical_sz, mapoff, "map");
-		showmap(lmr, mdat, mi->map0.size * logical_sz);
-		zfree(mdat, mi->map0.size * logical_sz);
+		if (j+1 == ip[j]) {
+		  mapoff = getsector(mi->map0.dsa);
+		  mdat = zreado(fd, mi->map0.size * logical_sz, mapoff, "map");
+		  showmap(lmr, mdat, mi->map0.size * logical_sz);
+		  zfree(mdat, mi->map0.size * logical_sz);
+		}
               } else if (mi->map0.dsa.addr != -1) {
                 printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Ref :%x\n",
                        lvl, pt, 
@@ -1515,7 +1517,6 @@ void showalldata()
                        j, k,
                        D(mi->map0.dsa.addr));
               }
-#endif
               poff += 6;
             }
 	    zfree(ip,sizeof(int)*k);
