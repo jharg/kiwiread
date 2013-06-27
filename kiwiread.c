@@ -17,6 +17,8 @@
 #define _PACKED __attribute__((packed))
 #pragma pack(1)
 
+int isin(double y, double x, double ly, double lx, double dy, double dx);
+
 struct key_t
 {
   int key;
@@ -378,7 +380,6 @@ void *zreado(int fd, size_t sz, off_t off, char *lbl)
   void *ptr;
 
   nm += sz;
-  fprintf(stderr, "sz = %d:%s %ld\n", sz, lbl, nm);
   ptr = zmalloc(sz);
   pread(fd, ptr, sz, off);
   return ptr;	
@@ -1103,6 +1104,8 @@ int typecolor(int type)
   case 0x210:
   case 0x211:
     return RGB(0xFF,0,0);
+  case 0x6180:
+    return RGB(0x0,0x80,0x0);
   default:
     return RGB(0xff,0xff,0xff);
   }
@@ -1115,7 +1118,7 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
   struct mapframe_t *mf = map;
   int nData, nExt, j, off, i;
   void *dptr;
-  int nx, ny, lvl;
+  int nx, ny, lvl, cx, cy;
 
   /* Basic map/Extended map numbers */
   lvl = extract(lmr->header, 10, 15);
@@ -1137,6 +1140,8 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
 
   de = (void *)&mf[1] + mf->nregion * 4;
 
+  cx = extract(mf->llcode, 0, 7);
+  cy = extract(mf->llcode, 8, 15);
   nx = (1+lmr->nblocksets.lng)*(1+lmr->nblocks.lng)*(1+lmr->nparcels[0].lng);
   ny = (1+lmr->nblocksets.lat)*(1+lmr->nblocks.lat)*(1+lmr->nparcels[0].lat);
 
@@ -1144,18 +1149,18 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
    * [VAR] Main Map Basic Data Frame
    * [VAR] Main Map Extended Data Frame
    */
-  printf("    ==== [%d,%d] lat/lng : @@ lvl:%2d ", 
-	 extract(mf->llcode, 0, 7),
-	 extract(mf->llcode, 8, 15),
-	 lvl);
+  printf("    ==== [%d,%d] lat/lng : @@ lvl:%2d ", cx, cy, lvl);
   showpid(mf->llpid);
   printf(" to ");
   printf("%lf,%lf\n",
-	 geo_secs(mf->llpid.lat) + 2*(_ry-_ly)/ny,
-	 geo_secs(mf->llpid.lng) + 2*(_rx-_lx)/nx);
-  if (isin(30.2669, -97.7428, geo_secs(mf->llpid.lat), (_ry-_ly)/ny, geo_secs(mf->llpid.lng), (_rx-_lx)/nx)) {
+	 geo_secs(mf->llpid.lat) + (_ry-_ly)/ny,
+	 geo_secs(mf->llpid.lng) + (_rx-_lx)/nx);
+  if (isin(30.2669, -97.7428, 
+	   geo_secs(mf->llpid.lat), geo_secs(mf->llpid.lng), (_rx-_lx)/nx, (_ry-_ly)/ny)) {
     printf(" @@ AUSTIN\n");
   }
+  if (!drawme)
+    return;
   _mx = geo_secs(mf->llpid.lng);
   _my = geo_secs(mf->llpid.lat);
 #if 0
@@ -1406,6 +1411,7 @@ void showalldata()
   bsmrmap = calloc(pdmdh->nbsmr, sizeof(struct bsmr_t *));
   for (i=0; i<pdmdh->nbsmr; i++) {
     bsmr = (struct bsmr_t *)(zdat[0] + moff);
+    double lvx,lvy;
 
     bsmrmap[i] = bsmr;
     swapw(&bsmr->header);
@@ -1461,6 +1467,7 @@ void showalldata()
 		   (1+lmr->nblocksets.lat)*(1+lmr->nblocks.lat)*(1+lmr->nparcels[0].lat));
             poff += 4;
 
+	    /* Calculate integrated packets */
 	    ip = zmalloc(sizeof(int)*k);
 	    for (j=0; j<k; j++) {
 	      uint32_t add,size,l;
@@ -1470,21 +1477,30 @@ void showalldata()
 	      if (!ip[j] && add != 0xffffffff && size) {
 		ip[j] =  j+1;
 		for (l=j+1; l<k; l++) {
+		  /* If address is same, both are in same integrated packet */
 		  if (add == _4b(pdat + poff + l*6)) {
 		    ip[l] = j+1;
 		  }
 		}
 	      }
-	      printf("   [%3d,%3d] Add: %.8x  Size:%.4x ip:%d\n", 
+	      printf("   [%3d,%3d] lvl:%d Add: %.8x  Size:%.4x ip:%d\n", 
 		       j % (1+lmr->nparcels[pt].lat), 
 		     j / (1+lmr->nparcels[pt].lat), 
-		     add, size, ip[j]);
+		     lvl, add, size, ip[j]);
 	    }
+
             for (j=0; j<k; j++) {
               void *mdat;
               off_t mapoff;
 
-	      drawme = (ip[j] == 9 && lvl == 10);
+	      /* lvl=10: [2,0]
+	       * lvl=4:  [34,26]: 1699/1763 ok
+	       * lvl=2:  [10,42]: 2569
+	       * lvl=0:  [40,44]: 2857
+	       */
+	      /* South Austin: [4] 34,26 = 1699  30.000,-98.000 to 30.333,-97.50 */
+	      /* North Austin: [4] 34,27 = 1763, 30.333,-98.000 to 30.666,-97.50*/
+	      drawme = (ip[j] == 1763 && lvl == 4);
               if (poff > bmt->size * logical_sz) {
 		fprintf(stderr,"boooo\n");
                 break;
@@ -1499,7 +1515,7 @@ void showalldata()
                        bset, (1+lmr->nblocksets.lng) * (1+lmr->nblocksets.lat),
                        bc-1, (1+lmr->nblocks.lng) * (1+lmr->nblocks.lat),
                        j,   k);
-		if (j+1 == ip[j] && drawme) {
+		if (j+1 == ip[j]) {
 		  mapoff = getsector(mi->map0.dsa);
 		  mdat = zreado(fd, mi->map0.size * logical_sz, mapoff, "map");
 		  showmap(lmr, mdat, mi->map0.size * logical_sz);
