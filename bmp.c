@@ -199,22 +199,32 @@ void bmp_polyfill(bitmap_t *bmp, int nvertex, int *xy, int rgb)
     }
   }
   for(;;) {
+    /* Sort verticies by increasing y/x */
     qsort(global, c, sizeof(struct edge_t), cmp);
+
+    /* If no verticies remain, done */
     if (global[0].flag)
       break;
 
+    /* y0 is lowest Y coordinate */
     y0 = global[0].y0;
+
+    /* loop through remaining valid verticies.
+     * Draw horizontal lines while Y coordinates are the same
+     */
     for (n=0; n<c && global[n].y0 == y0 && global[n].flag == 0; n+=2) {
       /* ASSERT(global[n].y0 == global[n+1].y0) */
 
       /* Draw lines while y0 are same */
       bmp_hline(bmp, global[n].x0, global[n+1].x0, y0, rgb); 
     }
+
+    /* Increment X/Y */
     for (n=0; n<c && global[n].y0 == y0; n++) {
       /* Advance X by slope */
       global[n].x0 += global[n].m;
 
-      /* Increment Y */
+      /* Increment Y - if above MaxY, flag as complete */
       if (++global[n].y0 >= global[n].y1) {
  	global[n].flag = 1;
       }
