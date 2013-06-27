@@ -198,7 +198,7 @@ void bmp_polyfill(bitmap_t *bmp, int nvertex, int *xy, int rgb)
       c++;
     }
   }
-  for(;;) {
+  while (c) {
     /* Sort verticies by increasing y/x */
     qsort(global, c, sizeof(struct edge_t), cmp);
 

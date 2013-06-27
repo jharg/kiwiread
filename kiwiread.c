@@ -766,18 +766,17 @@ void dumproad(void *ptr, size_t len)
   printf("=========== @roadend\n");
 }
 
+double   ssz  = 8192.0;
+int      bmsz = 4000;
+
 /* 7.4 Name Data Frame */
 void dumpname(void *ptr, size_t len)
 {
   size_t hlen = SWS(_2b(ptr)); // 7.4.1 [SWS] Name Distribution Header
   int na, attr1, attr2,ab,xc,yc,st,off,toff,tnum,k,ang,sx,sy,rx,ry;
   char slen, str[256] = { 0 };
-  matrix_t m;
   vector_t v;
-  int sz = 4000;
-  double ssz = 16400.0;
 
-  m = S(sz/ssz,sz/ssz);
   printf("==================== name\n");
   ab = 0;
   for (off=2; off<hlen; off+=4) {
@@ -840,6 +839,8 @@ void dumpname(void *ptr, size_t len)
 	  slen = _2b(ptr + toff + 6)*2;
 	  memcpy(str, ptr + toff + 8, slen);
 	  printf("  string: '%s' x:%d y:%d\n", str, xc, yc);
+
+	  bmp_drawstring(bm, v.v[0],v.v[1], CENTER, CENTER, 0, str, RGB(0xff,0xFF,0xff));
 	  toff += slen + 8; // string length
 	} else if (st == 4) {
 	  /* 7.4.2.1.5 Linear-B 
@@ -1038,9 +1039,7 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	  }
 	  if (t[i]) {
 	    vector_t v;
-	    matrix_t m;
-	    int rx,ry,sz = 4000;
-	    double ssz = 16400.0;
+	    int rx,ry;
 
 	    /* Extract coordinates */
 	    rx = extract(gr->sx, 13, 15);           // 0..7
@@ -1048,38 +1047,37 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	    lx = extract(gr->sx, 0, 12) + rx*4096;  // 0..8191
 	    ly = extract(gr->sy, 0, 12) + ry*4096;  // 0..8191
 
-	    //printf("  [%4d,%4d]\n", lx, ly);
-
-	    m = S(sz/ssz,sz/ssz);
-	    
 	    pts = zmalloc(sizeof(int)*2*(ncoord+2));
 	    v = matxvec(m,vecinit(lx,ly));
 	    pts[0] = v.v[0];
 	    pts[1] = v.v[1];
+
+	    //printf("  [%4d,%4d] = [%4d,%4d]\n", lx, ly, pts[0], pts[1]);
+
 	    for (k=0; k<ncoord; k++) {
 	      xc = lx + gr->coords[k].xo * mconst;
 	      yc = ly + gr->coords[k].yo * mconst;
-	      //printf("  [%4d,%4d]\n", xc, yc);
 
 	      v = matxvec(m,vecinit(xc,yc));
 	      pts[k*2+2] = v.v[0];
 	      pts[k*2+3] = v.v[1];
+	      //printf("  [%4d,%4d] = [%4d,%4d]\n", xc, yc, pts[k*2+2], pts[k*2+3]);
 
 	      lx = xc;
 	      ly = yc;
 	    }
-	    /* 3 == Hawaii */
-	    /* 6 == Cali  */
 	    if (drawme) {
 	      if (ns++ == 0) {
-		bm = bmp_alloc(sz,sz);
+		bm = bmp_alloc(bmsz,bmsz);
 		v = matxvec(m,vecinit(8192,8192));
 		bmp_rect(bm,0,0,v.v[0],v.v[1],RGB(0xFF,0xFF,0));
 	      }
-	      if (t[i] == 2)
-		bmp_polyfill(bm,  k-1, pts, typecolor(gr->code));
-	      else
-		bmp_polyline(bm, k-1, pts, typecolor(gr->code));
+	      if (t[i] == 2) {
+		bmp_polyfill(bm, ncoord, pts, typecolor(gr->code));
+	      }
+	      else {
+		bmp_polyline(bm, ncoord, pts, typecolor(gr->code));
+	      }
 	    }
 	    free(pts);
 	  }
@@ -1167,31 +1165,24 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
    * [VAR] Main Map Basic Data Frame
    * [VAR] Main Map Extended Data Frame
    */
+  _mx = geo_secs(mf->llpid.lng);
+  _my = geo_secs(mf->llpid.lat);
+
   printf("    ==== [%d,%d] lat/lng : @@ lvl:%2d ", cx, cy, lvl);
   showpid(mf->llpid);
   printf(" to ");
-  printf("%lf,%lf\n",
-	 geo_secs(mf->llpid.lat) + (_ry-_ly)/ny,
-	 geo_secs(mf->llpid.lng) + (_rx-_lx)/nx);
+  printf("%lf,%lf\n", _my + (_ry-_ly)/ny, _mx + (_rx-_lx)/nx);
+
+  printf("    divint:%d adj:%d type:%d lat:%d lng:%d\n",
+	 extract(mf->dipid, 14, 15),
+	 extract(mf->dipid, 13, 13),
+	 extract(mf->dipid, 8, 9),
+	 extract(mf->dipid, 4, 7),
+	 extract(mf->dipid, 0, 3));
   if (isin(30.2669, -97.7428, 
 	   geo_secs(mf->llpid.lat), geo_secs(mf->llpid.lng), (_rx-_lx)/nx, (_ry-_ly)/ny)) {
     printf(" @@ AUSTIN\n");
   }
-  if (!drawme)
-    return;
-  _mx = geo_secs(mf->llpid.lng);
-  _my = geo_secs(mf->llpid.lat);
-#if 0
-  printf("  divintid: %d\n", extract(mf->dipid, 14, 15));
-  printf("  adjflag : %d\n", extract(mf->dipid, 13, 13));
-  printf("  type#   : %d\n", extract(mf->dipid, 8, 9));
-  printf("  relx.y  : %d, %d\n", 
-	 extract(mf->dipid, 4, 7), extract(mf->dipid, 0, 3));
-  printf("  area#   : %d\n", extract(mf->pmcode, 24, 31));
-  printf("  rgoff   : %x\n", mf->rg_addr.addr);
-  printf("  rgsize  : %d\n", mf->rg_size);
-  printf("  nroute  : %d\n", mf->nregion);
-#endif
 
   off = 0;
   for (i=0; i<nData; i++) {
@@ -1265,6 +1256,9 @@ void showalldata()
   fd = open("/media/ALLDATA.KWI", O_LARGEFILE|O_RDONLY);
   if (fd < 0)
     return;
+
+  /* Setup matrix */
+  m = matxmat(S(bmsz/ssz,bmsz/ssz),I());
 
   read(fd, &dv, sizeof(dv));
   swapw(&dv.spec_mid.date);
@@ -1502,7 +1496,7 @@ void showalldata()
 		}
 	      }
 	      printf("   [%3d,%3d] lvl:%d Add: %.8x  Size:%.4x ip:%d\n", 
-		       j % (1+lmr->nparcels[pt].lat), 
+		     j % (1+lmr->nparcels[pt].lat), 
 		     j / (1+lmr->nparcels[pt].lat), 
 		     lvl, add, size, ip[j]);
 	    }
@@ -1511,7 +1505,9 @@ void showalldata()
               void *mdat;
               off_t mapoff;
 
-	      /* lvl=10: [2,0]
+	      /* lvl=10, 3 == Hawaii
+	       * lvl=10, 6 == Cali
+	       * lvl=10: [2,0]
 	       * lvl=4:  [34,26]: 1699/1763 ok
 	       * lvl=2:  [10,42]: 2569
 	       * lvl=0:  [40,44]: 2857
@@ -1533,7 +1529,7 @@ void showalldata()
                        bset, (1+lmr->nblocksets.lng) * (1+lmr->nblocksets.lat),
                        bc-1, (1+lmr->nblocks.lng) * (1+lmr->nblocks.lat),
                        j,   k);
-		if (j+1 == ip[j]) {
+		if (j+1 == ip[j] && drawme) {
 		  mapoff = getsector(mi->map0.dsa);
 		  mdat = zreado(fd, mi->map0.size * logical_sz, mapoff, "map");
 		  showmap(lmr, mdat, mi->map0.size * logical_sz);
