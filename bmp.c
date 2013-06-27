@@ -120,6 +120,15 @@ void bmp_poly(bitmap_t *bmp, int nvertex, int *xy, int rgb)
   bmp_line(bmp, xy[i*2], xy[i*2+1], xy[0], xy[1], rgb);
 }
 
+void bmp_polyline(bitmap_t *bmp, int nvertex, int *xy, int rgb)
+{
+  int i;
+  
+  for (i=0; i<nvertex-1; i++) {
+    bmp_line(bmp, xy[i*2], xy[i*2+1], xy[i*2+2], xy[i*2+3], rgb);
+  }
+}
+
 struct edge_t
 {
   double x0,y0,y1,m;
@@ -1053,7 +1062,7 @@ int main()
   bmp_line(b, 0,20, 500, 0,  RGB(0xFF,0,0xFF));
   bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 0, "ABCDEFGHIJKLMNOP", RGB(0xFF,0xFF,0));
   bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 160, "0123456789", RGB(0xFF,0xFF,0xFF));
-  //bmp_polyfill(b, 4, poly, RGB(0,0xFF,0));
+  bmp_polyfill(b, 4, poly, RGB(0,0xFF,0));
   //bmp_polyfill(b, 6, poly2, RGB(0xff, 0, 0xFF));
   //bmp_polyfill(b, 5, star, RGB(0x0,0x0,0xFF));
 
@@ -1061,7 +1070,7 @@ int main()
   for (n=0; n<10; n++) {
     polyv[n] = rand() % 500;
   }
-  bmp_polyfill(b, n/2, polyv, RGB(0xFF,0xFF,0x80));
+  //bmp_polyfill(b, n/2, polyv, RGB(0xFF,0xFF,0x80));
   bmp_write(b, "x.bmp");
 
   return 0;

@@ -931,13 +931,16 @@ void osmtag(int type)
 }
 
 #define ZZ -1
+int drawme;
+
 void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 {
   size_t hlen = SWS(_2b(ptr)); // 7.3.1 [SWS] background distribution header size
   off_t off, poff, goff, boff;
   int i, n, b, p[256], t[256], j, plen, val, ncoord, xc, yc, lx, ly, k, mconst;
   struct mingr_t *gr;
-  int pts[10000];
+  int *pts;
+  static int ns;
 
   //printf("========= Background %.4x\n", len);
   for (off=2; off<hlen; off+=4) {
@@ -970,7 +973,6 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 
       for (i=0; i<n; i++)  {
 	/*  7.3.2.2 Minimum Graphics Data List */
-	memset(pts, 0, sizeof(pts));
 	for (j=0; j<p[i]; j++) {
 	  /* 7.3.2.2.1 Minumum Graphics Data Record
 	   *   00 [B:B:B:SWS] Header
@@ -1020,23 +1022,66 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	    exit(0);
 	  }
 	  if (t[i]) {
+	    matrix_t m;
+	    vector_t v;
+	    int rx,ry,sz = 4000;
+
 	    /* Extract coordinates */
-	    lx = extract(gr->sx, 0, 12); // 0..8191
-	    ly = extract(gr->sy, 0, 12); // 0..8191
+	    rx = extract(gr->sx, 13, 15);           // 0..7
+	    ry = extract(gr->sy, 13, 15);           // 0..7
+	    lx = extract(gr->sx, 0, 12) + rx*4096;  // 0..8191
+	    ly = extract(gr->sy, 0, 12) + ry*4096;  // 0..8191
+
+	    //printf("  [%4d,%4d]\n", lx, ly);
+
+	    m = S(sz/8500.0,sz/8500.0);
+	    
+	    pts = zmalloc(sizeof(int)*2*(ncoord+2));
+	    v = matxvec(m,vecinit(lx,ly));
+	    pts[0] = v.v[0];
+	    pts[1] = v.v[1];
+	    if (v.v[0] > 8192 ||  v.v[1] > 8192) {
+	      printf("biggie\n");
+	    }
 	    for (k=0; k<ncoord; k++) {
 	      xc = lx + gr->coords[k].xo * mconst;
 	      yc = ly + gr->coords[k].yo * mconst;
+	      //printf("  [%4d,%4d]\n", xc, yc);
 
-	      writeline(lx,ly,xc,yc, gr->code);
+	      v = matxvec(m,vecinit(xc,yc));
+	      if (v.v[0] > 8192 ||  v.v[1] > 8192) {
+		printf("biggie\n");
+	      }
+	      pts[k*2+2] = v.v[0];
+	      pts[k*2+3] = v.v[1];
 
 	      lx = xc;
 	      ly = yc;
 	    }
+	    /* 3 == Hawaii */
+	    /* 6 == Cali  */
+	    if (drawme) {
+	      if (ns++ == 0) {
+		bm = bmp_alloc(sz,sz);
+		v = matxvec(m,vecinit(8192,8192));
+		bmp_rect(bm,0,0,v.v[0],v.v[1],RGB(0xFF,0xFF,0));
+	      }
+	      if (t[i] == 2)
+		bmp_polyfill(bm,  k-1, pts, typecolor(gr->code));
+	      else
+		bmp_polyline(bm, k-1, pts, typecolor(gr->code));
+	    }
+	    free(pts);
 	  }
 	  poff += plen;
 	}
       }
     }
+  }
+  printf("== end background\n");
+  if (drawme) {
+    bmp_write(bm, "poly.bmp");
+    exit(0);
   }
 }
 
@@ -1049,73 +1094,32 @@ int xx[] = { RGB(0xFF,0,0), 0,
 	     RGB(0xFF,0xFF,0xFF),0
 };
 
-void writebox(double ly, double lx, double wy, double wx, int lvl)
+int typecolor(int type)
 {
-  static matrix_t  m;
-  vector_t ll,ur;
-
-  if (bm == NULL) {
-    bm =  bmp_alloc(1000,1000);
-    m  = matxmat(S(1000/(_rx-_lx),1000/(_ry-_ly)),T(-_lx,-_ly));
-  }
-  ll = matxvec(m, vecinit(lx,ly));
-  ur = matxvec(m, vecinit(lx+wx,ly+wy));
-  bmp_rect(bm, ll.v[0], ll.v[1], ur.v[0], ur.v[1], xx[lvl]);
-#if 0
-  fprintf(stderr, "<Polygon><outerBoundaryIs><LinearRing><coordinates>\n");
-  fprintf(stderr, " %lf,%lf,0,\n",ly,lx);
-  fprintf(stderr, " %lf,%lf,0,\n",ly+wy,lx);
-  fprintf(stderr, " %lf,%lf,0,\n",ly+wy,lx+wx);
-  fprintf(stderr, " %lf,%lf,0,\n",ly,lx+wx);
-  fprintf(stderr, "</coordinates></LinearRing></outerBoundaryIs></Polygon>\n");
-#endif
-}
-
-void writeline(int x0, int y0, int x1, int y1, int type)
-{
-  matrix_t  m;
-  vector_t ll,ur;
-  int clr;
-
   switch (type) {
   case 0x121:
   case 0x122:
   case 0x123:
   case 0x124:
-    clr = RGB(0,0,0xFF);
-    return;
-    break;
+    return RGB(0,0,0xFF);
   case 0x128:
-    clr = RGB(0,0xFF,0);
-    break;
+    return RGB(0,0xFF,0);
   case 0x131:
-    clr = RGB(0x40,0x40,0x40);
-    break;
+    return RGB(0x40,0x40,0x40);
   case 0x132:
-    clr = RGB(0x80,0x80,0x80);
-    break;
+    return RGB(0x80,0x80,0x80);
   case 0x134:
-    clr = RGB(0xc0,0xc0,0xc0);
-    break;
+    return RGB(0xc0,0xc0,0xc0);
   case 0x140:
   case 0x141:
-    clr =  RGB(0,0xFF,0);
-    break;
+    return  RGB(0,0xFF,0);
   case 0x210:
   case 0x211:
-    clr = RGB(0xFF,0,0);
-    break;
+    return RGB(0xFF,0,0);
   default:
-    clr = RGB(0xff,0xff,0xff);
-    break;
+    return RGB(0xff,0xff,0xff);
   }
-  if (bm == NULL) {
-    bm = bmp_alloc(2000,2000);
-  }
-  m  = matxmat(S(2000/4096.0,2000/4096.0),T(-_lx,-_ly));
-  ll = matxvec(m, vecinit(_mx+x0,_my+y0));
-  ur = matxvec(m, vecinit(_mx+x1,_my+y1));
-  bmp_line(bm, ll.v[0], ll.v[1], ur.v[0], ur.v[1], clr);
+  return -1;
 }
 
 void showmap(struct lmr_t *lmr, void *map, size_t len)
@@ -1160,8 +1164,8 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
   showpid(mf->llpid);
   printf(" to ");
   printf("%lf,%lf\n",
-	 geo_secs(mf->llpid.lat) + (_ry-_ly)/ny,
-	 geo_secs(mf->llpid.lng) + (_rx-_lx)/nx);
+	 geo_secs(mf->llpid.lat) + 2*(_ry-_ly)/ny,
+	 geo_secs(mf->llpid.lng) + 2*(_rx-_lx)/nx);
   if (isin(30.2669, -97.7428, geo_secs(mf->llpid.lat), (_ry-_ly)/ny, geo_secs(mf->llpid.lng), (_rx-_lx)/nx)) {
     printf(" @@ AUSTIN\n");
   }
@@ -1489,6 +1493,7 @@ void showalldata()
               void *mdat;
               off_t mapoff;
 
+	      drawme = (ip[j] == 12);
               if (poff > bmt->size * logical_sz) {
 		fprintf(stderr,"boooo\n");
                 break;
@@ -1503,7 +1508,7 @@ void showalldata()
                        bset, (1+lmr->nblocksets.lng) * (1+lmr->nblocksets.lat),
                        bc-1, (1+lmr->nblocks.lng) * (1+lmr->nblocks.lat),
                        j,   k);
-		if (j+1 == ip[j]) {
+		if (j+1 == ip[j] && drawme) {
 		  mapoff = getsector(mi->map0.dsa);
 		  mdat = zreado(fd, mi->map0.size * logical_sz, mapoff, "map");
 		  showmap(lmr, mdat, mi->map0.size * logical_sz);
