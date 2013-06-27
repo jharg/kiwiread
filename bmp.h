@@ -45,3 +45,8 @@ enum valign_t {
   TOP,
   BOTTOM
 };
+
+enum orient_t {
+  HORIZ,
+  VERT
+};

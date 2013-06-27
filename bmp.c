@@ -33,13 +33,17 @@ void bmp_putpixel(bitmap_t *bmp, int x, int y, int rgb)
   bmp->data[x+y*bmp->w] = rgb;
 }
 
+static int swap(int *a, int *b)
+{
+  int tmp = *a;
+  *a = *b;
+  *b = tmp;
+}
+
 void bmp_hline(bitmap_t *bmp, int x0, int x1, int y0, int rgb)
 {
-  int tmp;
   if (x0 > x1) {
-    tmp = x0;
-    x0 = x1;
-    x1 = tmp;
+    swap(&x0,&x1);
   }
   while (x0 <= x1)
     bmp_putpixel(bmp, x0++, y0, rgb);
@@ -47,12 +51,8 @@ void bmp_hline(bitmap_t *bmp, int x0, int x1, int y0, int rgb)
 
 void bmp_vline(bitmap_t *bmp, int x0, int y0, int y1, int rgb)
 {
-  int tmp;
-
   if (y0 > y1) {
-    tmp = y0;
-    y0 = y1;
-    y1 = tmp;
+    swap(&y0,&y1);
   }
   while (y0 <= y1)
     bmp_putpixel(bmp, x0, y0++, rgb);
@@ -75,14 +75,15 @@ void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
   else if (y0 == y1)
     bmp_hline(bmp, x0, x1, y0, rgb);
   else {
-    sx = sy = 1;
-
+    /* Calculate delta xy and errorterm */
+    sx = 1;
+    sy = 1;
     if ((dx = x1 - x0) < 0) {
-      sx = -1;
+      sx = -sx;
       dx = -dx;
     }
     if ((dy = y1 - y0) < 0) {
-      sy = -1;
+      sy = -sy;
       dy = -dy;
     }
     e = dx - dy;
@@ -111,12 +112,87 @@ void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
 /* Draw polygon */
 void bmp_poly(bitmap_t *bmp, int nvertex, int *xy, int rgb)
 {
-  int i, off;
+  int i;
   
   for (i=0; i<nvertex-1; i++) {
-    bmp_line(bmp, xy[i*2], xy[i*2+1], xy[(i+1)*2], xy[(i+1)*2+1], rgb);
+    bmp_line(bmp, xy[i*2], xy[i*2+1], xy[i*2+2], xy[i*2+3], rgb);
   }
   bmp_line(bmp, xy[i*2], xy[i*2+1], xy[0], xy[1], rgb);
+}
+
+struct edge_t
+{
+  double x0,y0,y1,m;
+  int flag;
+};
+
+int sgn(double val)
+{
+  return (0 < val) - (val < 0);
+}
+
+int cmp(const void *a, const void *b)
+{
+  const struct edge_t *ea = a;
+  const struct edge_t *eb = b;
+  int rc;
+
+  /* Sort by sign, y0, x0 */
+  if ((rc = sgn(ea->flag - eb->flag)) == 0) {
+    if ((rc = sgn(ea->y0 - eb->y0)) == 0)
+      rc = sgn(ea->x0 - eb->x0);
+  }
+  return rc;
+}
+
+void bmp_polyfill(bitmap_t *bmp, int nvertex, int *xy, int rgb)
+{
+  int x0,y0,x1,y1,c,n,e2,done;
+  struct edge_t *global;
+
+  c = 0;
+  global = alloca(sizeof(struct edge_t)*nvertex);
+  for (n=0; n<nvertex; n++) {
+    x0 = xy[n*2];
+    y0 = xy[n*2+1];
+    x1 = xy[(n*2+2) % (nvertex*2)];
+    y1 = xy[(n*2+3) % (nvertex*2)];
+    if (y0 > y1) {
+      swap(&y0,&y1);
+      swap(&x0,&x1);
+    }
+    /* dy is always positive */
+    if (y0 != y1) {
+      global[c].x0 = x0;
+      global[c].y0 = y0;
+      global[c].y1 = y1;
+      global[c].flag = 0;
+      global[c].m  = (double)(x1-x0)/(y1-y0);
+      c++;
+    }
+  }
+  for(;;) {
+    qsort(global, c, sizeof(struct edge_t), cmp);
+    if (global[0].flag)
+      break;
+
+    y0 = global[0].y0;
+    for (n=0; n<c && global[n].y0 == y0 && global[n].flag == 0; n+=2) {
+      /* ASSERT(global[n].y0 == global[n+1].y0) */
+
+      /* Draw lines while y0 are same */
+      bmp_hline(bmp, global[n].x0, global[n+1].x0, y0, rgb); 
+    }
+    for (n=0; n<c && global[n].y0 == y0; n++) {
+      /* Advance X by slope */
+      global[n].x0 += global[n].m;
+
+      /* Increment Y */
+      if (++global[n].y0 >= global[n].y1) {
+ 	global[n].flag = 1;
+      }
+    }
+  }
 }
 
 /* Vector font */
@@ -755,8 +831,6 @@ void bmp_write(bitmap_t *bmp, const char *file)
   }
 }
 
-/* T(px,py,1)*S(sx,sy,1)*T(-px,-py,1) */
-
 /* 0      0       tx
  * 0      0       ty
  * 0      0       1
@@ -889,7 +963,7 @@ void bmp_free(bitmap_t *bmp)
 
 void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang, const char *str, int rgb)
 {
-  int i,len,w,tx,ty,pos,j,xo,yo;
+  int i,len,w,tx,ty,j,xo,yo, orient=0;
   vector_t p0,p1,v0,v1;
   matrix_t tr,m;
   int *vec;
@@ -913,28 +987,26 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
     tx = -w;
   if (valign == TOP)
     ty = -22;
+  else if (valign == CENTER)
+    ty -= 11;
 
   /* Precalc origin Translate+Rotate matrix */
   tr = matxmat(T(x,y),R(ang));
-  tr = matxmat(tr,S(0.5,0.5));
+  //tr = matxmat(tr,S(0.5,0.5));
   for (i=0; i<len; i++) {
     vec = simplex[str[i]-32];
 
-    v1.v[0] = -1;
-    v1.v[1] = -1;
-    v1.v[2] = 1;
-
     /* Calculate per-character offset Translate matrix */
     m = matxmat(tr,T(tx+xo,ty+yo));
-    xo += vec[1];
-    //yo -= 24;
+    if (orient == HORIZ)
+      xo += vec[1];
+    else
+      yo -= 24;
 
-    pos = 2;   
+    v1 = vecinit(-1,-1);
     for (j=0; j<vec[0]; j++) {
       v0 = v1;
-      v1.v[0] = vec[pos++];
-      v1.v[1] = vec[pos++];
-      v1.v[2] = 1;
+      v1 = vecinit(vec[j*2+2],vec[j*2+3]);
       if (v0.v[0] != -1 && v1.v[0] != -1) {
         p0 = matxvec(m,v0);
         p1 = matxvec(m,v1);
@@ -950,71 +1022,47 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
 int main()
 {
   bitmap_t *b;
-  int poly[] = { 10,0,50,10,40,50,0,40 };
-#if 1
+  int poly[] = { 
+    10,0,
+    50,10,
+    40,50,
+    0,40 
+  };
+  int poly2[] = {
+    28,10,
+    16,20,
+    10,16,
+    10,10,
+    22,10,
+    28,16
+  };
+  int star[] = { 
+    100,100,
+    166,0,
+    0,66,
+    200,66,
+    33,0,
+  };
+  int polyv[256];
+  int n;
+
   b = bmp_alloc(500,500);
   bmp_line(b, 0, 250, 500, 250, RGB(0,0,0xFF));
   bmp_line(b, 250, 0, 250, 500, RGB(0,0xFF,0));
-  //bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 0, "ABCDEFGHIJKLMNOP", RGB(0xFF,0xFF,0));
-  //bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 160, "0123456789", RGB(0xFF,0xFF,0xFF));
-  bmp_poly(b, 4, poly, RGB(0xff, 0, 0xFF));
+  bmp_line(b, 0, 0, 500, 20, RGB(0,0xFF,0xFF));
+  bmp_line(b, 0,20, 500, 0,  RGB(0xFF,0,0xFF));
+  bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 0, "ABCDEFGHIJKLMNOP", RGB(0xFF,0xFF,0));
+  bmp_drawstring(b, 250, 250, LEFT, BOTTOM, 160, "0123456789", RGB(0xFF,0xFF,0xFF));
+  //bmp_polyfill(b, 4, poly, RGB(0,0xFF,0));
+  //bmp_polyfill(b, 6, poly2, RGB(0xff, 0, 0xFF));
+  //bmp_polyfill(b, 5, star, RGB(0x0,0x0,0xFF));
+
+  srand((int)b ^ time(NULL));
+  for (n=0; n<10; n++) {
+    polyv[n] = rand() % 500;
+  }
+  bmp_polyfill(b, n/2, polyv, RGB(0xFF,0xFF,0x80));
   bmp_write(b, "x.bmp");
-#else
-  b = bmp_alloc(5000,5000);
-drawme("YOAKUM",3785,3963);
-drawme("FULTON",4011,192);
-drawme("GANADO",991,3201);
-drawme("SWEENY",2665,3190);
-drawme("BONNEY",3172,4058);
-drawme("PREMONT",1795,2134);
-drawme("REFUGIO",3532,939);
-drawme("BAYSIDE",3656,294);
-drawme("LA WARD",1096,2594);
-drawme("WHARTON",1844,4056);
-drawme("SOMERSET",700,3766);
-drawme("DRISCOLL",2555,3089);
-drawme("BEEVILLE",2561,1235);
-drawme("ROBSTOWN",2735,3449);
-drawme("NORDHEIM",2849,2830);
-drawme("YORKTOWN",3067,3014);
-drawme("PORTLAND",3442,3732);
-drawme("AUSTWELL",323,1197);
-drawme("SEADRIFT",590,1275);
-drawme("EL CAMPO",1458,3741);
-drawme("PALACIOS",1605,2154);
-drawme("BAY CITY",2110,3019);
-drawme("ANGLETON",3210,3577);
-drawme("FREEPORT",3390,2916);
-drawme("CHARLOTTE",602,2648);
-drawme("CHRISTINE",1033,2437);
-drawme("BENAVIDES",1211,2863);
-drawme("ELMENDORF",1362,3859);
-drawme("SAN DIEGO",1557,3371);
-drawme("STOCKDALE",2129,3798);
-drawme("LAKE CITY",2278,226);
-drawme("WOODSBORO",3439,732);
-drawme("LIVERPOOL",3518,3997);
-drawme("JOURDANTON",929,2822);
-drawme("FALFURRIAS",1752,1724);
-drawme("FALLS CITY",1984,3027);
-drawme("AGUA DULCE",2230,3425);
-drawme("FLORESVILLE",1727,3480);
-drawme("GEORGE WEST",1810,1016);
-drawme("KARNES CITY",2266,2737);
-drawme("PORT LAVACA",770,1892);
-drawme("THREE RIVERS",1680,1443);
-drawme("ORANGE GROVE",2175,3964);
-drawme("ARANSAS PASS",3791,3800);
-drawme("PORT ARANSAS",3957,3591);
-drawme("OYSTER CREEK",3424,3079);
-drawme("POINT COMFORT",915,2097);
-drawme("WEST COLUMBIA",2777,3512);
-drawme("VICTORIA",4088,2475);
-drawme("KINGSVILLE",2344,2608);
-drawme("LAKE JACKSON",3181,3177);
-drawme("CORPUS CHRISTI",3269,3470);
-  bmp_write(b, "x.bmp");
-#endif
 
   return 0;
 }
