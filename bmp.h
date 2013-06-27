@@ -1,3 +1,5 @@
+#ifndef __bmp_h__
+#define __bmp_h__
 typedef struct
 {
   double v[3];
@@ -51,3 +53,4 @@ enum orient_t {
   HORIZ,
   VERT
 };
+#endif
