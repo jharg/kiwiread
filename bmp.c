@@ -1001,7 +1001,7 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
 
   /* Precalc origin Translate+Rotate matrix */
   tr = matxmat(T(x,y),R(ang));
-  //tr = matxmat(tr,S(0.5,0.5));
+  tr = matxmat(tr,S(0.5,0.5));
   for (i=0; i<len; i++) {
     vec = simplex[str[i]-32];
 

@@ -669,23 +669,8 @@ struct mapframe_t {
   /* [VAR] mfde_t[] */
 } _PACKED;
 
-void drawname(int x, int y, int ha, int va, int angle, const char *str)
-{
-  static bitmap_t *b;
-  static int nid;
-
-  if (nid >= 12)
-    return;
-  if (b == NULL) {
-    b = bmp_alloc(1000,1000);
-  }
-  bmp_drawstring(b,x,y, 0, 0, angle, str, RGB(0xFF,0,0));
-  if (++nid == 12) {
-    bmp_write(b, "bmp.out");
-    bmp_free(b);
-    exit(0);
-  }
-}
+bitmap_t *bm;
+matrix_t  m;
 
 /* Multilink Header */
 struct mlh_t
@@ -766,11 +751,15 @@ void dumproad(void *ptr, size_t len)
 void dumpname(void *ptr, size_t len)
 {
   size_t hlen = SWS(_2b(ptr)); // 7.4.1 [SWS] Name Distribution Header
-  int na, attr1, attr2,ab,xc,yc,st,off,toff,tnum,k,ang;
+  int na, attr1, attr2,ab,xc,yc,st,off,toff,tnum,k,ang,sx,sy,rx,ry;
   char slen, str[256] = { 0 };
+  matrix_t m;
+  vector_t v;
+  int sz = 4000;
+  double ssz = 16400.0;
 
+  m = S(sz/ssz,sz/ssz);
   printf("==================== name\n");
-
   ab = 0;
   for (off=2; off<hlen; off+=4) {
     /* 7.4.1 Name Data Management Information
@@ -804,8 +793,15 @@ void dumpname(void *ptr, size_t len)
 	printf("name: gr:%d str:%d attr:%x [%s] ", extract(na, 0, 11), st, attr2, lookup(types, attr2));
 	toff += 6;
 
-	xc = extract(_2b(ptr + toff + 2), 0, 12);
-	yc = extract(_2b(ptr + toff + 4), 0, 12);
+	sx = _2b(ptr + toff + 2);
+	sy = _2b(ptr + toff + 4);
+
+	rx = extract(sx, 13, 15);
+	ry = extract(sy, 13, 15);
+	xc = extract(sx, 0, 12) + rx*4096;
+	yc = extract(sy, 0, 12) + ry*4096;
+
+	v = matxvec(m,vecinit(xc,yc));
 	memset(str, 0, sizeof(str));
 	if (st == 1) {
 	  /* 7.4.2.1.2  Barycentric string
@@ -879,6 +875,8 @@ void dumpname(void *ptr, size_t len)
 	  slen = _2b(ptr + toff + 8)*2;
 	  memcpy(str, ptr + toff + 10, slen);
 	  printf("  string: '%s' x:%d y:%d\n", str, xc, yc);
+
+	  bmp_drawstring(bm, v.v[0],v.v[1], CENTER, CENTER, 0, str, RGB(0xff,0xFF,0xff));
 	  toff += slen + 10;
 	} else {
 	  os_dump(ptr + toff, 32);
@@ -888,8 +886,6 @@ void dumpname(void *ptr, size_t len)
     }
   }
 }
-
-bitmap_t *bm;
 
 // 7.3.2.2.1 Minimum Graphics Record
 struct mingr_t
@@ -1022,9 +1018,10 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	    exit(0);
 	  }
 	  if (t[i]) {
-	    matrix_t m;
 	    vector_t v;
+	    matrix_t m;
 	    int rx,ry,sz = 4000;
+	    double ssz = 16400.0;
 
 	    /* Extract coordinates */
 	    rx = extract(gr->sx, 13, 15);           // 0..7
@@ -1034,24 +1031,18 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 
 	    //printf("  [%4d,%4d]\n", lx, ly);
 
-	    m = S(sz/8500.0,sz/8500.0);
+	    m = S(sz/ssz,sz/ssz);
 	    
 	    pts = zmalloc(sizeof(int)*2*(ncoord+2));
 	    v = matxvec(m,vecinit(lx,ly));
 	    pts[0] = v.v[0];
 	    pts[1] = v.v[1];
-	    if (v.v[0] > 8192 ||  v.v[1] > 8192) {
-	      printf("biggie\n");
-	    }
 	    for (k=0; k<ncoord; k++) {
 	      xc = lx + gr->coords[k].xo * mconst;
 	      yc = ly + gr->coords[k].yo * mconst;
 	      //printf("  [%4d,%4d]\n", xc, yc);
 
 	      v = matxvec(m,vecinit(xc,yc));
-	      if (v.v[0] > 8192 ||  v.v[1] > 8192) {
-		printf("biggie\n");
-	      }
 	      pts[k*2+2] = v.v[0];
 	      pts[k*2+3] = v.v[1];
 
@@ -1079,10 +1070,6 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
     }
   }
   printf("== end background\n");
-  if (drawme) {
-    bmp_write(bm, "poly.bmp");
-    exit(0);
-  }
 }
 
 int xx[] = { RGB(0xFF,0,0), 0, 
@@ -1193,7 +1180,7 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
 
       /* 0 == road data, 1 == background data, 2 == name data */
       if (i == 2) {
-	//dumpname(dptr, SWS(de[off].size));
+	dumpname(dptr, SWS(de[off].size));
       }
       if (i == 0) {
 	//dumproad(dptr, SWS(de[off].size));
@@ -1209,6 +1196,10 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
     swapw(&de[off].size);
     //printf("  Ext%d: %x %x\n", i, D(de[off].offset), SWS(de[off].size));
     off++;
+  }
+  if (drawme) {
+    bmp_write(bm, "poly.bmp");
+    exit(0);
   }
 }
 
@@ -1493,7 +1484,7 @@ void showalldata()
               void *mdat;
               off_t mapoff;
 
-	      drawme = (ip[j] == 12);
+	      drawme = (ip[j] == 9 && lvl == 10);
               if (poff > bmt->size * logical_sz) {
 		fprintf(stderr,"boooo\n");
                 break;
