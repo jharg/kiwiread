@@ -71,7 +71,7 @@ struct xml_node
 /* latitude   -90..0..90 = 69.407 .. 68.703 .. 69.407 */
 /* longitude  -180 .. 0 .. 180 =  */
 
-#define SIZE 1000
+#define SIZE 4000
 int main(int argc, char *argv[])
 {
   struct stat st;
@@ -83,6 +83,10 @@ int main(int argc, char *argv[])
   matrix_t m;
   vector_t v0,v1;
   bitmap_t *bm;
+  char   rtype[128];
+  int    pts[2000];
+  int    clr,npts;
+
   minx = 180;
   miny = 90;
   maxx = -180;
@@ -118,10 +122,6 @@ int main(int argc, char *argv[])
     SLIST_INSERT_HEAD(&nlist, node, entry);
     np++;
   }
-  //minx = -97.753;
-  //maxx = -97.72732;
-  //miny = 30.26099;
-  //maxy = 30.27701;
   sz = (maxx-minx);
   if (sz < (maxy-miny))
     sz = maxy-miny;
@@ -132,19 +132,36 @@ int main(int argc, char *argv[])
 
   np = ptr;
   while ((np = strstr(np, "<way")) != NULL) {
-    printf("----\n");
     lc = NULL;
     if ((npe = strstr(np, "</way")) != NULL) {
+      clr = RGB(0,0xFF,0);
+      for (s=np; s != npe; s++) {
+	if (sscanf(s, "k=\"highway\" v=\"%[^\"]s", rtype) == 1) {
+	  if (!strcmp(rtype, "residential"))
+	    clr = RGB(0x70,0x70,0x70);
+	  else if (!strcmp(rtype, "primary"))
+	    clr = RGB(0xFF,0x00,0x00);
+	  else if (!strcmp(rtype, "trunk"))
+	    clr = RGB(0x0,0x40,0xff);
+	}
+      }
+      npts = 0;
       for (s=np; s != npe; s++) {
 	if (sscanf(s, "<nd ref=\"%lld\"", &id) == 1) {
 	  cc = findnode(id);
-	  if (lc != NULL && cc != NULL) {
-	    v0 = matxvec(m, vecinit(lc->lon, lc->lat));
-	    v1 = matxvec(m, vecinit(cc->lon, cc->lat));
-	    bmp_line(bm, v0.v[0], v0.v[1], v1.v[0], v1.v[1], RGB(0,0xFF,0));
-	  }
-	  lc = cc;
-	  printf("nd = %lld\n", id);
+	  v0 = matxvec(m, vecinit(cc->lon, cc->lat));
+	  pts[npts++] = v0.v[0];
+	  pts[npts++] = v0.v[1];
+	}
+      }
+      if (npts != 0) {
+	if (pts[0] == pts[npts-2] && pts[1] == pts[npts-1]) {
+	  printf("polygon\n");
+	  bmp_polyfill(bm, npts/2, pts, clr);
+	}
+	else {
+	  bmp_polyline(bm, npts/2, pts, clr);
+	  printf("polyline\n");
 	}
       }
     }

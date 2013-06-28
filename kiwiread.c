@@ -953,7 +953,7 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 {
   size_t hlen = SWS(_2b(ptr)); // 7.3.1 [SWS] background distribution header size
   off_t off, poff, goff, boff;
-  int i, n, b, p[256], t[256], j, plen, val, ncoord, xc, yc, lx, ly, k, mconst;
+  int i, n, b, p[256], t[256], j, plen, val, ncoord, xc, yc, k, mconst;
   struct mingr_t *gr;
   int *pts;
   static int ns;
@@ -1044,31 +1044,28 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	    /* Extract coordinates */
 	    rx = extract(gr->sx, 13, 15);           // 0..7
 	    ry = extract(gr->sy, 13, 15);           // 0..7
-	    lx = extract(gr->sx, 0, 12) + rx*4096;  // 0..8191
-	    ly = extract(gr->sy, 0, 12) + ry*4096;  // 0..8191
+	    xc = extract(gr->sx, 0, 12) + rx*4096;  // 0..8191
+	    yc = extract(gr->sy, 0, 12) + ry*4096;  // 0..8191
 
 	    pts = zmalloc(sizeof(int)*2*(ncoord+2));
-	    v = matxvec(m,vecinit(lx,ly));
+	    v = matxvec(m,vecinit(xc,yc));
 	    pts[0] = v.v[0];
 	    pts[1] = v.v[1];
 
-	    //printf("  [%4d,%4d] = [%4d,%4d]\n", lx, ly, pts[0], pts[1]);
+	    //printf("  [%4d,%4d] = [%4d,%4d]\n", xc, yc, pts[0], pts[1]);
 
 	    for (k=0; k<ncoord; k++) {
-	      xc = lx + gr->coords[k].xo * mconst;
-	      yc = ly + gr->coords[k].yo * mconst;
+	      xc += gr->coords[k].xo * mconst;
+	      yc += gr->coords[k].yo * mconst;
 
 	      v = matxvec(m,vecinit(xc,yc));
 	      pts[k*2+2] = v.v[0];
 	      pts[k*2+3] = v.v[1];
 	      //printf("  [%4d,%4d] = [%4d,%4d]\n", xc, yc, pts[k*2+2], pts[k*2+3]);
-
-	      lx = xc;
-	      ly = yc;
 	    }
 	    if (drawme) {
 	      if (ns++ == 0) {
-		bm = bmp_alloc(bmsz,bmsz);
+		bm = bmp_allocsvg(bmsz,bmsz, "out.svg");
 		v = matxvec(m,vecinit(8192,8192));
 		bmp_rect(bm,0,0,v.v[0],v.v[1],RGB(0xFF,0xFF,0));
 	      }
@@ -1495,6 +1492,9 @@ void showalldata()
 		  }
 		}
 	      }
+	      else if (!ip[j] && add != 0xffffffff && !size) {
+		ip[j] = -1;
+	      }
 	      printf("   [%3d,%3d] lvl:%d Add: %.8x  Size:%.4x ip:%d\n", 
 		     j % (1+lmr->nparcels[pt].lat), 
 		     j / (1+lmr->nparcels[pt].lat), 
@@ -1512,8 +1512,6 @@ void showalldata()
 	       * lvl=2:  [10,42]: 2569
 	       * lvl=0:  [40,44]: 2857
 	       */
-	      /* South Austin: [4] 34,26 = 1699  30.000,-98.000 to 30.333,-97.50 */
-	      /* North Austin: [4] 34,27 = 1763, 30.333,-98.000 to 30.666,-97.50*/
 	      drawme = (ip[j] == 1763 && lvl == 4);
               if (poff > bmt->size * logical_sz) {
 		fprintf(stderr,"boooo\n");

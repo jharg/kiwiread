@@ -32,6 +32,19 @@ static void *zmalloc(size_t sz)
   return ptr;
 }
 
+bitmap_t *bmp_allocsvg(int w, int h, const char *file)
+{
+  bitmap_t *bmp;
+
+  w = (w + 3) & ~3;
+  bmp = zmalloc(sizeof(*bmp));
+  bmp->svgfile = fopen(file, "w");
+  fprintf(bmp->svgfile, "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n");
+  bmp->w = w;
+  bmp->h = h;
+  return bmp;
+}
+
 bitmap_t *bmp_alloc(int w, int h)
 {
   bitmap_t *bmp;
@@ -60,6 +73,10 @@ static int swap(int *a, int *b)
 
 void bmp_hline(bitmap_t *bmp, int x0, int x1, int y0, int rgb)
 {
+  if (bmp->svgfile) {
+    bmp_line(bmp, x0, y0, x1, y0, rgb);
+    return;
+  }
   if (x0 > x1) {
     swap(&x0,&x1);
   }
@@ -69,6 +86,10 @@ void bmp_hline(bitmap_t *bmp, int x0, int x1, int y0, int rgb)
 
 void bmp_vline(bitmap_t *bmp, int x0, int y0, int y1, int rgb)
 {
+  if (bmp->svgfile) {
+    bmp_line(bmp, x0, y0, x0, y1, rgb);
+    return;
+  }
   if (y0 > y1) {
     swap(&y0,&y1);
   }
@@ -88,6 +109,11 @@ void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
 {
   int dx, dy, sx, sy, e, e2;
 
+  if (bmp->svgfile) {
+    fprintf(bmp->svgfile, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" style=\"stroke:rgb(%d,%d,%d):stroke-width:1\"/>\n",
+	    x0, bmp->h-y0, x1, bmp->h-y1, (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+    return;
+  }
   if (x0 == x1)
     bmp_vline(bmp, x0, y0, y1, rgb);
   else if (y0 == y1)
@@ -131,7 +157,16 @@ void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
 void bmp_poly(bitmap_t *bmp, int nvertex, int *xy, int rgb)
 {
   int i;
-  
+
+  if (bmp->svgfile) {
+    fprintf(bmp->svgfile, "<polygon points=\"");
+    for (i=0; i<nvertex; i++) {
+      fprintf(bmp->svgfile, "%d,%d ", xy[i*2], bmp->h-xy[i*2+1]);
+    }
+    fprintf(bmp->svgfile, "\" style=\"fill:none;stroke:rgb(%d,%d,%d);stroke-width:1\"/>\n",
+	    (rgb >> 16) & 0xFF, (rgb >> 8) & 0xff, rgb &  0xff);
+    return;
+  }
   for (i=0; i<nvertex-1; i++) {
     bmp_line(bmp, xy[i*2], xy[i*2+1], xy[i*2+2], xy[i*2+3], rgb);
   }
@@ -142,6 +177,15 @@ void bmp_polyline(bitmap_t *bmp, int nvertex, int *xy, int rgb)
 {
   int i;
   
+  if (bmp->svgfile) {
+    fprintf(bmp->svgfile, "<polyline points=\"");
+    for (i=0; i<nvertex; i++) {
+      fprintf(bmp->svgfile, "%d,%d ", xy[i*2], bmp->h-xy[i*2+1]);
+    }
+    fprintf(bmp->svgfile, "\" style=\"fill:none;stroke:rgb(%d,%d,%d);stroke-width:1\"/>\n",
+	    (rgb >> 16) & 0xFF, (rgb >> 8) & 0xff, rgb &  0xff);
+    return;
+  }
   for (i=0; i<nvertex-1; i++) {
     bmp_line(bmp, xy[i*2], xy[i*2+1], xy[i*2+2], xy[i*2+3], rgb);
   }
@@ -174,9 +218,18 @@ int cmp(const void *a, const void *b)
 
 void bmp_polyfill(bitmap_t *bmp, int nvertex, int *xy, int rgb)
 {
-  int x0,y0,x1,y1,c,n,e2,done;
+  int x0,y0,x1,y1,c,n,e2,done, i;
   struct edge_t *global;
 
+  if (bmp->svgfile) {
+    fprintf(bmp->svgfile, "<polygon points=\"");
+    for (i=0; i<nvertex; i++) {
+      fprintf(bmp->svgfile, "%d,%d ", xy[i*2], bmp->h-xy[i*2+1]);
+    }
+    fprintf(bmp->svgfile, "\" style=\"fill:rgb(%d,%d,%d);stroke-width:1\"/>\n",
+	    (rgb >> 16) & 0xFF, (rgb >> 8) & 0xff, rgb &  0xff);
+    return;
+  }
   c = 0;
   global = alloca(sizeof(struct edge_t)*nvertex);
   for (n=0; n<nvertex; n++) {
@@ -213,7 +266,7 @@ void bmp_polyfill(bitmap_t *bmp, int nvertex, int *xy, int rgb)
      * Draw horizontal lines while Y coordinates are the same
      */
     for (n=0; n<c && global[n].y0 == y0 && global[n].flag == 0; n+=2) {
-      /* ASSERT(global[n].y0 == global[n+1].y0) */
+      /* ASSERT(global[n].y0 == global[n+1].y0 && global[n].x0 <= global[n+1].x0) */
 
       /* Draw lines while y0 are same */
       bmp_hline(bmp, global[n].x0, global[n+1].x0, y0, rgb); 
@@ -836,6 +889,12 @@ void bmp_write(bitmap_t *bmp, const char *file)
   uint8_t h[HDRLEN] = { 0 };
   uint8_t rgb[4];
 
+  if (bmp->svgfile) {
+    fprintf(bmp->svgfile, "</svg>\n");
+    fclose(bmp->svgfile);
+    bmp->svgfile = NULL;
+    return;
+  }
   if ((fp = fopen(file, "w")) != NULL) {
     len = HDRLEN + NBYTES*bmp->w*bmp->h;
 
@@ -1005,6 +1064,13 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
   matrix_t tr,m;
   int *vec;
 
+  if (bmp->svgfile) {
+    char *horiz = "middle";
+
+    fprintf(bmp->svgfile, "<text x=\"%d\" y=\"%d\" text-anchor=\"%s\" style=\"font-family:monospace;font-size:18px;\" fill=\"rgb(%d,%d,%d)\">%s</text>\n",
+	    x, bmp->h - y, horiz, (rgb >> 16) & 0xff,(rgb>>8) & 0xff, rgb & 0xff, str);
+    return;
+  }
   w = 0;
   yo = xo = 0;
   len = strlen(str);

@@ -23,8 +23,10 @@ typedef struct
 {
   int w,h;
   int *data;
+  FILE *svgfile;
 } bitmap_t;
 
+bitmap_t *bmp_allocsvg(int w, int h, const char *);
 bitmap_t *bmp_alloc(int w, int h);
 void bmp_putpixel(bitmap_t *bmp, int x, int y, int rgb);
 void bmp_write(bitmap_t *bmp, const char *file);
