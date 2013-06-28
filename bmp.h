@@ -36,6 +36,7 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
 void bmp_rect(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb);
 void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb);
 void bmp_poly(bitmap_t *bmp, int nvertex, int *xy, int rgb);
+void bmp_polyfill(bitmap_t *bmp, int nvertex, int *xy, int rgb);
 void bmp_polyline(bitmap_t *bmp, int nvertex, int *xy, int rgb);
 
 #define RGB(r,g,b) ((b) + ((g) << 8) + ((r) << 16))

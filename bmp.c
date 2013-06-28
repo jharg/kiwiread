@@ -39,7 +39,8 @@ bitmap_t *bmp_allocsvg(int w, int h, const char *file)
   w = (w + 3) & ~3;
   bmp = zmalloc(sizeof(*bmp));
   bmp->svgfile = fopen(file, "w");
-  fprintf(bmp->svgfile, "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n");
+  fprintf(bmp->svgfile, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%dpx\" height=\"%dpx\" version=\"1.1\">\n", w, h);
+  fprintf(bmp->svgfile, "<rect x=\"0\" y=\"0\" width=\"%dpx\" height=\"%dpx\" fill=\"black\"/>\n", w, h);
   bmp->w = w;
   bmp->h = h;
   return bmp;
@@ -64,7 +65,7 @@ void bmp_putpixel(bitmap_t *bmp, int x, int y, int rgb)
   bmp->data[x+y*bmp->w] = rgb;
 }
 
-static int swap(int *a, int *b)
+static void swap(int *a, int *b)
 {
   int tmp = *a;
   *a = *b;

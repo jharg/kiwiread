@@ -29,6 +29,8 @@
 #include <time.h>
 #include <endian.h>
 #include <string.h>
+#include <unistd.h>
+#include <limits.h>
 //#include <oslib.h>
 #include "bmp.h"
 
@@ -83,28 +85,28 @@ struct key_t types[] = {
 };
 
 /* Decode 1,2,3,4 BigEndian bytes */
-uint8_t _1b(void *v)
+uint8_t _1b(const void *v)
 {
   return *(uint8_t *)v;
 }
 
-uint16_t _2b(void *v)
+uint16_t _2b(const void *v)
 {
-  uint8_t *s = v;
+  const uint8_t *s = v;
 
   return ((s[0] << 8) + s[1]);
 }
 
-uint32_t _3b(void *v)
+uint32_t _3b(const void *v)
 {
-  uint8_t  *s = v;
+  const uint8_t  *s = v;
 
   return ((s[0] << 16) + (s[1] << 8) + s[2]);
 }
 
-uint32_t _4b(void *v)
+uint32_t _4b(const void *v)
 {
-  uint8_t *s = v;
+  const uint8_t *s = v;
 
   return ((s[0] << 24) + (s[1] << 16) + (s[2] << 8) + s[3]);
 }
@@ -407,12 +409,12 @@ const char *mii_category[] = { "initial program", "program", "library", "data" }
 
 void swapw(uint16_t *w)
 {
-  *w = ntohs(*w);
+  *w = _2b(w);
 }
 
 void swapl(uint32_t *l)
 {
-  *l = ntohl(*l);
+  *l = _4b(l);
 }
 
 struct datadir_entry
@@ -703,8 +705,22 @@ struct mlh_t
   uint16_t passage;
 } _PACKED;
 
-double   ssz  = 8192.0;
-int      bmsz = 4000;
+double   ssz  = 8200;
+int      bmsz = 4096;
+
+int minx,maxx,miny,maxy;
+
+void setxy(int x, int y)
+{
+  if (x < minx)
+    minx = x;
+  if (x > maxx)
+    maxx = x;
+  if (y < miny)
+    miny = y;
+  if (y > maxy)
+    maxy = y;
+}
 
 /* 7.2.1 Road Distribution Header                       mandatory
  *   00 [SWS]					        mandatory
@@ -726,9 +742,9 @@ int      bmsz = 4000;
 void dumproad(void *ptr, size_t len)
 {
   size_t hlen = SWS(_2b(ptr));
-  int ninter, ndc, nad, lvl, i, off, xoff, xsz, npoly, poff, last, j, hdr, noff, nlen, lattr;
-  int sx, sy, xc, yc, rx, ry, k, nnodes, nip, l, no;
-  int pts[20000],npts;
+  int ninter, ndc, nad, lvl, i, off, xoff, xsz, npoly, last, j, hdr, noff, nlen, lattr;
+  int sx, sy, xc, yc, rx, ry, k, nnodes, nip, l, no, rtype;
+  int pts[20000],npts,clr;
   vector_t v;
 
   /* 7.2.1 */
@@ -780,12 +796,20 @@ void dumproad(void *ptr, size_t len)
 	       SWS(extract(_2b(ptr + xoff + 12),0,11)), // passage regulation
 	       SWS(extract(hdr, 0,7)),SWS(extract(hdr,16,27)));
 	lattr = _2b(ptr + xoff + 14);
-	printf("  road type:%d link:%d infra:%d rte:%d  toll:%d\n",
-	       extract(lattr, 12, 15),
+	rtype = extract(lattr, 12, 15);
+	printf("     road type:%d link:%d infra:%d rte:%d  toll:%d\n",
+	       rtype,
 	       extract(lattr, 11, 11),
 	       extract(lattr, 10, 10),
 	       extract(lattr, 9, 9),
 	       extract(lattr, 8, 8));
+	if (rtype == 0) {
+	  clr = RGB(0,0,0xFF);
+	} else if (rtype == 3) {
+	  clr = RGB(0xFF,0x0,0x40);
+	} else {
+	  clr = RGB(54,127,191);
+	}
 
 	/* Get offset of Shape Data */
 	noff = SWS(extract(hdr,0,7));
@@ -797,7 +821,7 @@ void dumproad(void *ptr, size_t len)
 	  /* link attribute */
 	  lattr = _2b(ptr + xoff + noff);
 	  nip = extract(lattr, 0, 9);
-	  printf("  oneway:%d.%d planned:%d tunnel:%d bridge:%d ip:%d\n",
+	  printf("      oneway:%d.%d planned:%d tunnel:%d bridge:%d ip:%d\n",
 		 extract(lattr, 15, 15),
 		 extract(lattr, 13, 14),
 		 extract(lattr, 12, 12),
@@ -815,15 +839,19 @@ void dumproad(void *ptr, size_t len)
 	  noff += 6;
 
 	  v = matxvec(m,vecinit(xc,yc));
+	  setxy(xc, yc);
 	  pts[npts++] = v.v[0];
 	  pts[npts++] = v.v[1];
+
 	  for (l=0; l<nip; l++) {
 	    xc += (char)_1b(ptr + xoff + noff);
 	    yc += (char)_1b(ptr + xoff + noff+1);
 
 	    v = matxvec(m,vecinit(xc,yc));
+	    setxy(xc, yc);
 	    pts[npts++] = v.v[0];
 	    pts[npts++] = v.v[1];
+
 	    //printf("    xc:%4d yc:%4d\n", xc, yc);
 	    noff += 2;
 	  }
@@ -833,10 +861,7 @@ void dumproad(void *ptr, size_t len)
 	  exit(0);
 	}
 	xoff += SWS(extract(hdr,16,27));
-	if (bm == NULL) {
-	  bm = bmp_alloc(bmsz,bmsz);
-	}
-	bmp_polyline(bm, npts/2, pts, RGB(0xff,0,0x40));
+	bmp_polyline(bm, npts/2, pts, clr);
       }
       printf("-- end %.4x\n", xoff);
     }
@@ -904,6 +929,8 @@ void dumpname(void *ptr, size_t len)
 	yc = extract(sy, 0, 12) + ry*4096;
 
 	v = matxvec(m,vecinit(xc,yc));
+	setxy(xc, yc);
+
 	memset(str, 0, sizeof(str));
 	if (st == 1) {
 	  /* 7.4.2.1.2  Barycentric string
@@ -991,6 +1018,7 @@ void dumpname(void *ptr, size_t len)
       }
     }
   }
+  printf("=========== @nameend\n");
 }
 
 // 7.3.2.2.1 Minimum Graphics Record
@@ -1038,8 +1066,8 @@ int drawme;
 void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 {
   size_t hlen = SWS(_2b(ptr)); // 7.3.1 [SWS] background distribution header size
-  off_t off, poff, goff, boff;
-  int i, n, b, p[256], t[256], j, plen, val, ncoord, xc, yc, k, mconst;
+  off_t off, poff, boff;
+  int i, n, p[256], t[256], j, plen, val, ncoord, xc, yc, k, mconst;
   struct mingr_t *gr;
   int *pts;
   static int ns;
@@ -1137,6 +1165,7 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	    v = matxvec(m,vecinit(xc,yc));
 	    pts[0] = v.v[0];
 	    pts[1] = v.v[1];
+	    setxy(xc,yc);
 
 	    //printf("  [%4d,%4d] = [%4d,%4d]\n", xc, yc, pts[0], pts[1]);
 
@@ -1147,16 +1176,14 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	      v = matxvec(m,vecinit(xc,yc));
 	      pts[k*2+2] = v.v[0];
 	      pts[k*2+3] = v.v[1];
+	      setxy(xc,yc);
 	      //printf("  [%4d,%4d] = [%4d,%4d]\n", xc, yc, pts[k*2+2], pts[k*2+3]);
 	    }
-	    if (drawme) {
-	      ns++;
-	      if (t[i] == 2) {
-		bmp_polyfill(bm, ncoord, pts, typecolor(gr->code));
-	      }
-	      else {
-		bmp_polyline(bm, ncoord, pts, typecolor(gr->code));
-	      }
+	    if (t[i] == 2) {
+	      bmp_polyfill(bm, ncoord, pts, typecolor(gr->code));
+	    }
+	    else {
+	      bmp_polyline(bm, ncoord+1, pts, typecolor(gr->code));
 	    }
 	    free(pts);
 	  }
@@ -1211,8 +1238,7 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
 {
   struct mfde_t *de;
   struct mapframe_t *mf = map;
-  int nData, nExt, j, off, i;
-  void *dptr;
+  int nData, nExt, j, i;
   int nx, ny, lvl, cx, cy;
 
   /* Basic map/Extended map numbers */
@@ -1220,13 +1246,6 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
   nData = extract(lmr->numbers, 12, 15);
   nExt  = extract(lmr->numbers, 8, 11);
 
-  if (drawme) {
-    vector_t v;
-
-    v = matxvec(m,vecinit(8192,8192));
-    bm = bmp_alloc(bmsz,bmsz);
-    bmp_rect(bm,0,0,v.v[0],v.v[1],RGB(0xFF,0xFF,0));
-  }
   swapw(&mf->size);
   swapw(&mf->llcode);
   swapw(&mf->dipid);
@@ -1269,37 +1288,19 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
 	   geo_secs(mf->llpid.lat), geo_secs(mf->llpid.lng), (_rx-_lx)/nx, (_ry-_ly)/ny)) {
     printf(" @@ AUSTIN\n");
   }
-
-  off = 0;
   for (i=0; i<nData; i++) {
-    swapl(&de[off].offset);
-    swapw(&de[off].size);
-    //printf("  Data%d: %.8x %.4x\n", i, D(de[off].offset), SWS(de[off].size));
-    if (de[off].size) {
-      dptr = map + D(de[off].offset);
-
-      /* 0 == road data, 1 == background data, 2 == name data */
-      if (i == 2) {
-	dumpname(dptr, SWS(de[off].size));
-      }
-      if (i == 0) {
-	dumproad(dptr, SWS(de[off].size));
-      }
-      if (i == 1) {
-	dumpbkgd(lmr,dptr, SWS(de[off].size));
-      }
-    }
-    off++;
+    swapl(&de[i].offset);
+    swapw(&de[i].size);
   }
-  for (i=0; i<nExt; i++) {
-    swapl(&de[off].offset);
-    swapw(&de[off].size);
-    //printf("  Ext%d: %x %x\n", i, D(de[off].offset), SWS(de[off].size));
-    off++;
+  /* Draw Background, Road, Names */
+  if (de[1].size) {
+    dumpbkgd(lmr, map + D(de[1].offset), SWS(de[1].size));
   }
-  if (drawme) {
-    bmp_write(bm, "poly.bmp");
-    exit(0);
+  if (de[0].size) {
+    dumproad(map + D(de[0].offset), SWS(de[0].size));
+  }
+  if (de[2].size) {
+    dumpname(map + D(de[2].offset), SWS(de[2].size));
   }
 }
 
@@ -1329,7 +1330,7 @@ int isin(double y, double x, double ly, double lx, double dy, double dx)
 
 void showalldata()
 {
-  int fd, i, fdp, j, lvl, k, bset, pt, bc, xt, l;
+  int fd, i, fdp, j, lvl, k, bset, pt, bc, xt, l, zip;
   struct datavol_t dv;
   struct mhr_t *mhr;
   off_t moff, cur;
@@ -1509,7 +1510,6 @@ void showalldata()
   bsmrmap = calloc(pdmdh->nbsmr, sizeof(struct bsmr_t *));
   for (i=0; i<pdmdh->nbsmr; i++) {
     bsmr = (struct bsmr_t *)(zdat[0] + moff);
-    double lvx,lvy;
 
     bsmrmap[i] = bsmr;
     swapw(&bsmr->header);
@@ -1520,6 +1520,16 @@ void showalldata()
     bset = extract(bsmr->header, 0, 7);
     lmr = findlevel(lmrmap, pdmdh->nlmr, lvl);
 
+    if (lvl == 12) {
+      vector_t v;
+      maxx = maxy = INT_MIN;
+      minx = miny = INT_MAX;
+      v = matxvec(m,vecinit(16384,16384));
+      bm = bmp_allocsvg(bmsz,bmsz,"out.svg");
+      bmp_rect(bm,0,0,v.v[0],v.v[1],RGB(0xFF,0xFF,0));
+    }
+
+    zip = 0;
     bc = 0;
     printf("---- bsmr%d: level=%2d blockset=%3d [%dx%d]\n",
            i, lvl, bset, 1+lmr->nblocksets.lng, 1+lmr->nblocksets.lat);
@@ -1528,13 +1538,11 @@ void showalldata()
       off_t boff, poff, toff;
       void *pdat;
 
-      lmr = findlevel(lmrmap, pdmdh->nlmr, lvl);
-
       boff = 0;
       while (boff < SWS(bsmr->bmt_size)) {
         struct parman_t *pi;
         union mapinfo_t *mi;
-	int *ip;
+	int *ip, *ipcount;
 
         bc++;  // matches nblocks.lat * nblocks.lng
         bmt = (struct bmt_t *)(zdat[0] + D(bsmr->bmt_offset) + boff);
@@ -1572,6 +1580,7 @@ void showalldata()
             poff += 4;
 
 	    /* Calculate integrated packets */
+	    ipcount = zmalloc(sizeof(int)*k);
 	    ip = zmalloc(sizeof(int)*k);
 	    for (j=0; j<k; j++) {
 	      uint32_t add,size,l;
@@ -1579,11 +1588,13 @@ void showalldata()
 	      add  = _4b(pdat + poff + j*6);
 	      size = _2b(pdat + poff + j*6 + 4);
 	      if (!ip[j] && add != 0xffffffff && size) {
-		ip[j] =  j+1;
+		ip[j] =  ++zip;
+		ipcount[j]++;
 		for (l=j+1; l<k; l++) {
 		  /* If address is same, both are in same integrated packet */
 		  if (add == _4b(pdat + poff + l*6)) {
-		    ip[l] = j+1;
+		    ipcount[j]++;
+		    ip[l] = ip[j];
 		  }
 		}
 	      }
@@ -1591,26 +1602,20 @@ void showalldata()
 		/* This is a divided packet */
 		ip[j] = -1;
 	      }
-	      if (add != 0xFFFFFFFF) {
-		printf("   [%3d,%3d] lvl:%d.%d Add: %.8x  Size:%.4x ip:%d\n", 
-		       j % (1+lmr->nparcels[pt].lat), 
-		       j / (1+lmr->nparcels[pt].lat), 
-		       lvl, pt, add, size, ip[j]);
-	      }
 	    }
 
             for (j=0; j<k; j++) {
               void *mdat;
               off_t mapoff;
 
-	      /* lvl=10, 3 == Hawaii
-	       * lvl=10, 6 == Cali
+	      /* lvl=8, 3 == Hawaii
+	       * lvl=8, 6 == Cali
 	       * lvl=10: [2,0]
 	       * lvl=4:  [34,26]: 1699/1763 ok
 	       * lvl=2:  [10,42]: 2569
 	       * lvl=0:  [40,44]: 2857
 	       */
-	      drawme = (ip[j] == 1763 && lvl == 4);
+	      drawme = (lvl == 12);
               if (poff > bmt->size * logical_sz) {
 		fprintf(stderr,"boooo\n");
                 break;
@@ -1620,19 +1625,24 @@ void showalldata()
               swapw(&mi->map0.size);
 
               if (mi->map0.size) {
-                printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d\n",
+                printf("    [%3d,%3d] MapPar Addr: level:%2d.%d  blockset:%2d/%2d block:%2d/%2d parcel:%4d/%4d  ip:%d [%d]\n",
+		       j % (1+lmr->nparcels[pt].lat),
+		       j / (1+lmr->nparcels[pt].lat),
                        lvl, pt, 
                        bset, (1+lmr->nblocksets.lng) * (1+lmr->nblocksets.lat),
                        bc-1, (1+lmr->nblocks.lng) * (1+lmr->nblocks.lat),
-                       j,   k);
-		if (j+1 == ip[j] && drawme) {
+                       j,   k,
+		       ip[j], ipcount[j]);
+		if (drawme) {
 		  mapoff = getsector(mi->map0.dsa);
 		  mdat = zreado(fd, mi->map0.size * logical_sz, mapoff, "map");
 		  showmap(lmr, mdat, mi->map0.size * logical_sz);
 		  zfree(mdat, mi->map0.size * logical_sz);
 		}
               } else if (mi->map0.dsa.addr != -1) {
-                printf("    MapPar Addr: level:%d.%d  blockset:%d/%d block:%d/%d parcel:%d/%d  Ref :%x\n",
+                printf("    [%3d,%3d] MapPar Addr: level:%2d.%d  blockset:%2d/%2d block:%2d/%2d parcel:%4d/%4d  Ref :%x\n",
+		       j % (1+lmr->nparcels[pt].lat),
+		       j / (1+lmr->nparcels[pt].lat),
                        lvl, pt, 
                        bset, (1+lmr->nblocksets.lng)*(1+lmr->nblocksets.lat),
                        bc-1, (1+lmr->nblocks.lng)*(1+lmr->nblocks.lat),
@@ -1642,12 +1652,18 @@ void showalldata()
               poff += 6;
             }
 	    zfree(ip,sizeof(int)*k);
+	    zfree(ipcount,sizeof(int)*k);
           }
         }
         boff += 6;
       }
       /* ASSERT: Number of blocks per blockset == nbx[lvl] * nby[lvl] */
       //printf("BlockSet Count %d = %d\n", lvl, bc);
+    }
+    if (lvl == 12) {
+      printf("coords = [%d,%d] - [%d,%d]\n", minx,miny,maxx,maxy);
+      bmp_write(bm, "poly.bmp");
+      exit(0);
     }
 
     moff += sizeof(*bsmr);
