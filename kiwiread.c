@@ -959,6 +959,8 @@ void dumpname(void *ptr, size_t len)
 	  slen = _2b(ptr + toff + 8)*2;
 	  memcpy(str, ptr + toff + 10, slen);
 	  printf("  string: '%s' angle:%d x:%d y:%d\n", str, extract(ang, 0, 8), xc, yc);
+
+	  bmp_drawstring(bm, v.v[0],v.v[1], CENTER, CENTER, extract(ang, 0, 8), str, RGB(0xff,0xFF,0xff));
 	  toff += slen + 10;
 	} else if (st == 6) {
 	  /* 7.4.2.1.7 Symbol+String 
