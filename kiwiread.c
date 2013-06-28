@@ -569,6 +569,7 @@ struct parman_t
 {
   uint16_t             type;       // [N:N] Parcel Management type
   uint16_t             routeoff;   // [D] route guidance parcel management list
+  // mapinfo_t mapdata[];
 };
 
 /* Main Map Parcel Management Record */
@@ -702,17 +703,20 @@ struct mlh_t
   uint16_t passage;
 } _PACKED;
 
-/* 7.2.1 Road Distribution Header       mandatory
- *   [SWS]					mandatory
- *   [N] intersections				mandatory
- *   [N] # display classes[n]			mandatory
- *   [N] # additional data[m]			mandatory
- *   [I] level of route planning data		mandatory
- *   [n] Display Class Management Records	opt
- *       [D] Offset by display class			mandatory
- *       [B:N] Number of polylines[ri]                  mandatory 
- *   [m] Additional Data Management Records	opt
- * 7.2.2 Road Data List                 opt [n count]
+double   ssz  = 8192.0;
+int      bmsz = 4000;
+
+/* 7.2.1 Road Distribution Header                       mandatory
+ *   00 [SWS]					        mandatory
+ *   02 [N] intersections				mandatory
+ *   04 [N] # display classes[n]			mandatory
+ *   05 [N] # additional data[m]			mandatory
+ *   06 [I] level of route planning data		mandatory
+ *   08 [n] Display Class Management Records	        opt
+ *       10+2x [D] Offset by display class		mandatory
+ *       12+2x [B:N] Number of polylines[ri]            mandatory 
+ *   [m] Additional Data Management Records	        opt
+ * 7.2.2 Road Data List                                 opt [n count]
  *   [B...] Display Scale Flag
  *   [ri]   Multilink Data Record
  * Passage Code Data Frame        opt
@@ -721,41 +725,124 @@ struct mlh_t
  */
 void dumproad(void *ptr, size_t len)
 {
-  size_t hlen = _2b(ptr) * 2;
-  int ninter, ndc, nad, lvl, i, off, xoff, xsz, npoly, poff, last, j;
+  size_t hlen = SWS(_2b(ptr));
+  int ninter, ndc, nad, lvl, i, off, xoff, xsz, npoly, poff, last, j, hdr, noff, nlen, lattr;
+  int sx, sy, xc, yc, rx, ry, k, nnodes, nip, l, no;
+  int pts[20000],npts;
+  vector_t v;
 
+  /* 7.2.1 */
   ninter = _2b(ptr + 2);
   ndc = _1b(ptr + 4);
   nad = _1b(ptr + 5);
-  lvl = _2b(ptr + 6);
-  printf("========== road %.4x inter:%d  display:%d additional:%d lvl:%d\n", len, ninter, ndc, nad, lvl);
-  os_dump(ptr, hlen);
+  lvl = extract(_2b(ptr + 6), 10, 15);
+  printf("========== road %.4x inter:%.4x  display:%2d additional:%d lvl:%d\n", len, ninter, ndc, nad, lvl);
 
   off = 8;
-
+  
   /* Display Classes */
   last  = 0xFFFF;
   for (i=0; i<ndc; i++) {
+    /* 7.2.1.1 Display Class Management Record
+     *   00 [D]   Offset by Display Class
+     *   02 [B:N]
+     *       00:11 Number of polylines by display class [ri]
+     */
     xoff = D(_2b(ptr + off));
-    xsz  = _2b(ptr + off + 2);
-    npoly = extract(xsz, 0, 11);
-    off += 4;
-    if (xoff != 0xFFFF) {
-      printf("  display:%.4x  npoly:%d\n", xoff * 2, npoly);
-      for (j=0; j<npoly; j++) {
-	printf("    poly%d: %.4x  shape:%.4x additional:%.4x altitude:%.4x passage regulation:%.4x\n", j, xoff,
-	       _2b(ptr + xoff + 6)*2, 
-	       _2b(ptr + xoff + 8)*2, 
-	       _2b(ptr + xoff + 10)*2, 
-	       _2b(ptr + xoff + 12)*2);
-	last = _4b(ptr + xoff);
-	os_dump(ptr + xoff, extract(last, 0, 7)*2);
+    npoly = extract(_2b(ptr + off + 2), 0, 11); // Number of Polylines (0..4095)
 
-	xoff += extract(last, 0, 7)*2;
+    if (xoff != 0xFFFF) {
+      printf("  display:%.4x  npoly:%.4x display flag:%.4x\n", xoff, npoly, _2b(ptr + xoff));
+      xoff += 2;
+      for (j=0; j<npoly; j++) {
+	/* 7.2.2.1.1.1 MultiLink Header 
+	 *    00 [B:B:B:B:SWS:B:SWS] Header
+	 *    04 [N] Node Information Management Header
+	 *    06 [SWS] Shape Information Header [x]
+	 *    08 [SWS] Additional Node Information Header [y]
+	 *    10 [SWS] Altitude Information Management Header [z]
+	 *    12 [SWS] Passage Information Management Header [w]
+	 *    
+	 *    [x] Shape Information
+	 *    [x] Link/Node Connection Information
+	 *    [y] Additional Node Information
+	 *    [z] Altitude Information
+	 *    [w] Passage Regulation Information
+	 */
+	hdr = _4b(ptr + xoff);
+	nnodes = extract(_2b(ptr + xoff + 4), 0, 10);
+	printf("    poly%d: %.4x  nodes:%x shape:%.4x additional:%.4x altitude:%.4x passage regulation:%.4x hdr.size:%x size:%x\n", 
+	       j, xoff,
+	       nnodes,
+	       SWS(extract(_2b(ptr + xoff + 6),0,11)),  // shape
+	       SWS(extract(_2b(ptr + xoff + 8),0,11)),  // additional
+	       SWS(extract(_2b(ptr + xoff + 10),0,11)), // altitude
+	       SWS(extract(_2b(ptr + xoff + 12),0,11)), // passage regulation
+	       SWS(extract(hdr, 0,7)),SWS(extract(hdr,16,27)));
+	lattr = _2b(ptr + xoff + 14);
+	printf("  road type:%d link:%d infra:%d rte:%d  toll:%d\n",
+	       extract(lattr, 12, 15),
+	       extract(lattr, 11, 11),
+	       extract(lattr, 10, 10),
+	       extract(lattr, 9, 9),
+	       extract(lattr, 8, 8));
+
+	/* Get offset of Shape Data */
+	noff = SWS(extract(hdr,0,7));
+	nlen = SWS(extract(_2b(ptr + xoff + 6), 0, 11));
+
+	npts = 0;
+	no = noff;
+	for (k=0; k<nnodes; k++) {
+	  /* link attribute */
+	  lattr = _2b(ptr + xoff + noff);
+	  nip = extract(lattr, 0, 9);
+	  printf("  oneway:%d.%d planned:%d tunnel:%d bridge:%d ip:%d\n",
+		 extract(lattr, 15, 15),
+		 extract(lattr, 13, 14),
+		 extract(lattr, 12, 12),
+		 extract(lattr, 11, 11),
+		 extract(lattr, 10, 10),
+		 nip);
+	  sx = _2b(ptr + xoff + noff + 2);
+	  sy = _2b(ptr + xoff + noff + 4);
+	  rx = extract(sx, 13, 15);
+	  ry = extract(sy, 13, 15);
+	  xc = extract(sx, 0, 12) + rx*4096;
+	  yc = extract(sy, 0, 12) + ry*4096;
+
+	  //printf("    xc:%4d yc:%4d\n", xc, yc);
+	  noff += 6;
+
+	  v = matxvec(m,vecinit(xc,yc));
+	  pts[npts++] = v.v[0];
+	  pts[npts++] = v.v[1];
+	  for (l=0; l<nip; l++) {
+	    xc += (char)_1b(ptr + xoff + noff);
+	    yc += (char)_1b(ptr + xoff + noff+1);
+
+	    v = matxvec(m,vecinit(xc,yc));
+	    pts[npts++] = v.v[0];
+	    pts[npts++] = v.v[1];
+	    //printf("    xc:%4d yc:%4d\n", xc, yc);
+	    noff += 2;
+	  }
+	}
+	if (noff != no+nlen) {
+	  printf("BAD LEN %d,%d\n", noff, nlen);
+	  exit(0);
+	}
+	xoff += SWS(extract(hdr,16,27));
+	if (bm == NULL) {
+	  bm = bmp_alloc(bmsz,bmsz);
+	}
+	bmp_polyline(bm, npts/2, pts, RGB(0xff,0,0x40));
       }
       printf("-- end %.4x\n", xoff);
     }
+    off += 4;
   }
+  /* Additional Data */
   for (i=0; i<nad; i++) {
     xoff = D(_2b(ptr + off));
     xsz  = SWS(_2b(ptr + off + 2));
@@ -765,9 +852,6 @@ void dumproad(void *ptr, size_t len)
   }
   printf("=========== @roadend\n");
 }
-
-double   ssz  = 8192.0;
-int      bmsz = 4000;
 
 /* 7.4 Name Data Frame */
 void dumpname(void *ptr, size_t len)
@@ -1064,11 +1148,7 @@ void dumpbkgd(struct lmr_t *lmr, void *ptr, size_t len)
 	      //printf("  [%4d,%4d] = [%4d,%4d]\n", xc, yc, pts[k*2+2], pts[k*2+3]);
 	    }
 	    if (drawme) {
-	      if (ns++ == 0) {
-		bm = bmp_allocsvg(bmsz,bmsz, "out.svg");
-		v = matxvec(m,vecinit(8192,8192));
-		bmp_rect(bm,0,0,v.v[0],v.v[1],RGB(0xFF,0xFF,0));
-	      }
+	      ns++;
 	      if (t[i] == 2) {
 		bmp_polyfill(bm, ncoord, pts, typecolor(gr->code));
 	      }
@@ -1138,6 +1218,13 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
   nData = extract(lmr->numbers, 12, 15);
   nExt  = extract(lmr->numbers, 8, 11);
 
+  if (drawme) {
+    vector_t v;
+
+    v = matxvec(m,vecinit(8192,8192));
+    bm = bmp_alloc(bmsz,bmsz);
+    bmp_rect(bm,0,0,v.v[0],v.v[1],RGB(0xFF,0xFF,0));
+  }
   swapw(&mf->size);
   swapw(&mf->llcode);
   swapw(&mf->dipid);
@@ -1194,7 +1281,7 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
 	dumpname(dptr, SWS(de[off].size));
       }
       if (i == 0) {
-	//dumproad(dptr, SWS(de[off].size));
+	dumproad(dptr, SWS(de[off].size));
       }
       if (i == 1) {
 	dumpbkgd(lmr,dptr, SWS(de[off].size));
@@ -1412,7 +1499,7 @@ void showalldata()
     printf("  #background     : %d\n", extract(xt, 5, 9)+1);   // 7.3 Background Data Frame 1..32
     printf("  #name           : %d\n", extract(xt, 0, 4)+1);   // 7.4 Name Data Frame       1..32
 
-    os_dump(&lmr[1], SWS(pdmdh->lmr_sz) - sizeof(*lmr));
+    //os_dump(&lmr[1], SWS(pdmdh->lmr_sz) - sizeof(*lmr));
     moff += SWS(pdmdh->lmr_sz);
   }
 
@@ -1457,23 +1544,29 @@ void showalldata()
           pdat = zreado(fd, bmt->size * logical_sz, poff, "pdat");
 
           poff = 0;
-          while (!poff && poff < bmt->size*logical_sz) {
+          while (poff < bmt->size*logical_sz) {
             pi = (void *)(pdat + poff);
 
+	    /* Parcel Management */
             swapw(&pi->type);
             swapw(&pi->routeoff);
+	    if (pi->routeoff != 0xFFFF) {
+	      printf("remain bmt:\n");
+	      os_dump(pdat + poff, bmt->size * logical_sz - poff);
+	      break;
+	    }
 
             pt = extract(pi->type, 8, 9);
             k = (1+lmr->nparcels[pt].lat)*(1+lmr->nparcels[pt].lng);
-            printf("   Parcel type %d listtype:%d offset:%x map:%dx%d = %d [%dx%d]\n", 
+            printf("  Parcel type %d listtype:%d offset:%x map:%dx%d = %d [%dx%d]\n", 
                    extract(pi->type, 8, 9),
                    extract(pi->type, 0, 7),
                    D(pi->routeoff),
                    1+lmr->nparcels[pt].lat,
                    1+lmr->nparcels[pt].lng,
                    k,
-		   (1+lmr->nblocksets.lng)*(1+lmr->nblocks.lng)*(1+lmr->nparcels[0].lng),
-		   (1+lmr->nblocksets.lat)*(1+lmr->nblocks.lat)*(1+lmr->nparcels[0].lat));
+		   (1+lmr->nblocksets.lng)*(1+lmr->nblocks.lng)*(1+lmr->nparcels[pt].lng),
+		   (1+lmr->nblocksets.lat)*(1+lmr->nblocks.lat)*(1+lmr->nparcels[pt].lat));
             poff += 4;
 
 	    /* Calculate integrated packets */
@@ -1493,12 +1586,15 @@ void showalldata()
 		}
 	      }
 	      else if (!ip[j] && add != 0xffffffff && !size) {
+		/* This is a divided packet */
 		ip[j] = -1;
 	      }
-	      printf("   [%3d,%3d] lvl:%d Add: %.8x  Size:%.4x ip:%d\n", 
-		     j % (1+lmr->nparcels[pt].lat), 
-		     j / (1+lmr->nparcels[pt].lat), 
-		     lvl, add, size, ip[j]);
+	      if (add != 0xFFFFFFFF) {
+		printf("   [%3d,%3d] lvl:%d.%d Add: %.8x  Size:%.4x ip:%d\n", 
+		       j % (1+lmr->nparcels[pt].lat), 
+		       j / (1+lmr->nparcels[pt].lat), 
+		       lvl, pt, add, size, ip[j]);
+	      }
 	    }
 
             for (j=0; j<k; j++) {
