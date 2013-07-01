@@ -100,6 +100,17 @@ void bmp_vline(bitmap_t *bmp, int x0, int y0, int y1, int rgb)
 
 void bmp_rect(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb)
 {
+  if (bmp->svgfile) {
+    if (x0 > x1) {
+      swap(&x0, &x1);
+    }
+    if (y0 > y1) {
+      swap(&y0,&y1);
+    }
+    fprintf(bmp->svgfile, "<rect x=\"%dpx\" y=\"%dpx\" width=\"%dpx\" height=\"%dpx\" style=\"fill:none;stroke:rgb(%d,%d,%d);stroke-width:1;\"/>\n", 
+	    x0, y0, x1-x0, y1-y0, (rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
+      return;
+  }
   bmp_hline(bmp, x0, x1, y0, rgb);
   bmp_hline(bmp, x0, x1, y1, rgb);
   bmp_vline(bmp, x0, y0, y1, rgb);
@@ -219,7 +230,7 @@ int cmp(const void *a, const void *b)
 
 void bmp_polyfill(bitmap_t *bmp, int nvertex, int *xy, int rgb)
 {
-  int x0,y0,x1,y1,c,n,e2,done, i;
+  int x0,y0,x1,y1,c,n,i;
   struct edge_t *global;
 
   if (bmp->svgfile) {
@@ -886,9 +897,8 @@ static void _put16(uint8_t *p, int v)
 void bmp_write(bitmap_t *bmp, const char *file)
 {
   FILE *fp;
-  int len, i, j;
+  int len, j;
   uint8_t h[HDRLEN] = { 0 };
-  uint8_t rgb[4];
 
   if (bmp->svgfile) {
     fprintf(bmp->svgfile, "</svg>\n");
@@ -915,9 +925,13 @@ void bmp_write(bitmap_t *bmp, const char *file)
     fwrite(h, HDRLEN, 1, fp);
 
 #if (NBYTES == 4)
+    j = 0;
     fwrite(bmp->data, 4, bmp->w*bmp->h, fp);
 #else
     for (j=0; j<bmp->h; j++) {
+      uint8_t rgb[4];
+      int i;
+
       for (i=0; i<bmp->w; i++) {
 	_put24(rgb, bmp->data[i + j*bmp->w]);
 	fwrite(rgb, 3, 1, fp);
@@ -1065,13 +1079,6 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
   matrix_t tr,m;
   int *vec;
 
-  if (bmp->svgfile) {
-    char *horiz = "middle";
-
-    fprintf(bmp->svgfile, "<text x=\"%d\" y=\"%d\" text-anchor=\"%s\" style=\"font-family:monospace;font-size:18px;\" fill=\"rgb(%d,%d,%d)\">%s</text>\n",
-	    x, bmp->h - y, horiz, (rgb >> 16) & 0xff,(rgb>>8) & 0xff, rgb & 0xff, str);
-    return;
-  }
   w = 0;
   yo = xo = 0;
   len = strlen(str);
@@ -1081,6 +1088,13 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
     if (str[i] < ' ' || str[i] > 126)
       return;
     w += simplex[str[i]-32][1];
+  }
+  if (bmp->svgfile) {
+    char *horiz = "middle";
+
+    fprintf(bmp->svgfile, "<text x=\"%d\" y=\"%d\" text-anchor=\"%s\" style=\"font-family:monospace;font-size:18px;\" fill=\"rgb(%d,%d,%d)\">%s</text>\n",
+	    x, bmp->h - y, horiz, (rgb >> 16) & 0xff,(rgb>>8) & 0xff, rgb & 0xff, str);
+    return;
   }
 
   /* Calculate horiz/vert alignment */
