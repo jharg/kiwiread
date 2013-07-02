@@ -73,6 +73,8 @@ struct key_t types[] = {
   { 0x1FE, "information highway symbol" },
   { 0x210, "road type 0" },
   { 0x211, "road type 1" },
+  { 0x218, "road type 8" },
+  { 0x21b, "road type 11" },
   { 0x242, "very high speed railway, JR line [main line]" },
   { 0x280, "other airport" },
   { 0x408, "cemetery" },
@@ -704,7 +706,7 @@ struct mlh_t
 } _PACKED;
 
 /* Bitmap X/Y size */
-int      bmsz = 4096;
+int      bmsz = 2048;
 
 int minx,maxx,miny,maxy;
 
@@ -715,14 +717,22 @@ void setxy(int *pts, int x, int y)
   v = matxvec(m,vecinit(x,y));
   pts[0] = v.v[0];
   pts[1] = v.v[1];
-  if (x < minx)
+  if (x < minx) {
     minx = x;
-  if (x > maxx)
+    printf("minx: %d\n", x);
+  }
+  if (x > maxx) {
     maxx = x;
-  if (y < miny)
+    printf("maxx: %d\n", x);
+  }
+  if (y < miny) {
     miny = y;
-  if (y > maxy)
+    printf("miny: %d\n", y);
+  }
+  if (y > maxy) {
     maxy = y;
+    printf("maxy: %d\n", y);
+  }
 }
 
 /* 7.2.1 Road Distribution Header                       mandatory
@@ -877,7 +887,7 @@ void dumproad(void *ptr, size_t len)
 void dumpname(void *ptr, size_t len)
 {
   size_t hlen = SWS(_2b(ptr)); // 7.4.1 [SWS] Name Distribution Header
-  int na, attr1, attr2,ab,xc,yc,st,off,toff,tnum,k,ang,sx,sy,rx,ry;
+  int na, attr1, attr2,ab,xc,yc,st,off,toff,tnum,k,ang,sx,sy,rx,ry,ds;
   char slen, str[256] = { 0 };
   int pts[2];
 
@@ -911,18 +921,27 @@ void dumpname(void *ptr, size_t len)
 	attr1 = _2b(ptr + toff + 2);
 	attr2 = _2b(ptr + toff + 4);
 
+	ds = extract(attr1, 11, 15);
+
 	st = extract(attr1, 8, 10);    // [B] String type
-	printf("name: gr:%d str:%d attr:%x [%s] ", extract(na, 0, 11), st, attr2, lookup(types, attr2));
+	printf("name: gr:%d str:%d attr1:%x ds:%2x prio:%x type:%x [%s] dir:%s ", 
+	       extract(na, 0, 11), st, 
+	       attr1, extract(attr1, 11, 15), extract(attr1, 0, 5),
+	       attr2, lookup(types, attr2),
+	       extract(attr1, 6, 6) ? "vert" : "horz");
 	toff += 6;
 
-	sx = _2b(ptr + toff + 2);
-	sy = _2b(ptr + toff + 4);
-
-	rx = extract(sx, 13, 15);
-	ry = extract(sy, 13, 15);
-	xc = extract(sx, 0, 12) + rx*4096;
-	yc = extract(sy, 0, 12) + ry*4096;
-	setxy(pts, xc, yc);
+	/* Get X & Y coordinates */
+	if (st != 4) {
+	  sx = _2b(ptr + toff + 2);
+	  sy = _2b(ptr + toff + 4);
+	  
+	  rx = extract(sx, 13, 15);
+	  ry = extract(sy, 13, 15);
+	  xc = extract(sx, 0, 12) + rx*4096;
+	  yc = extract(sy, 0, 12) + ry*4096;
+	  setxy(pts, xc, yc);
+	}
 
 	memset(str, 0, sizeof(str));
 	if (st == 1) {
@@ -944,9 +963,12 @@ void dumpname(void *ptr, size_t len)
 	  memcpy(str, ptr + toff + 8, slen);
 	  printf("  string: '%s' x:%d y:%d\n", str, xc, yc);
 
-	  bmp_drawstring(bm, pts[0], pts[1], CENTER, CENTER, 0, str, RGB(0xff,0xFF,0xff));
+	  bmp_drawstring(bm, pts[0], pts[1], CENTER, CENTER, 0, 0, str, RGB(0xff,0xFF,0xff));
 	  toff += slen + 8; // string length
 	} else if (st == 4) {
+	  int sp;
+	  int npp;
+
 	  /* 7.4.2.1.5 Linear-B 
 	  *    00 [B:B:B:B:B:B:N] String Placement Information
 	  *    02 [D] Offset to Data
@@ -975,14 +997,30 @@ void dumpname(void *ptr, size_t len)
 	   *   08 Character Information  Data List
 	   *   xx Altitude Information
 	   */
+	  int h,v,o,a;
+
+	  /* Vertical to display angle == horizontal
+	   * Parallel to display angle == vertical
+	   */
 	  ang = _2b(ptr + toff + 6);
 	  slen = _2b(ptr + toff + 8)*2;
 	  memcpy(str, ptr + toff + 10, slen);
-	  printf("  string: '%s' angle:%d x:%d y:%d\n", str, extract(ang, 0, 8), xc, yc);
+	  printf("string: '%s' x:%d y:%d angle:%d {%s} orient:%d mode:%d\n", str, xc, yc, 
+		 extract(ang, 0, 8),
+		 extract(ang, 12,12) ? "rel" : "abs",
+		 extract(ang, 10,11),
+		 extract(ang, 9, 9));
+	  a = extract(ang, 0, 8) - 90;
+	  h = CENTER;
+	  v = CENTER;
+	  o = 0;
 
-	  bmp_drawstring(bm, pts[0], pts[1], CENTER, CENTER, extract(ang, 0, 8), str, RGB(0xff,0xFF,0xff));
+	  if (ds == 0x10)
+	    bmp_drawstring(bm, pts[0], pts[1], h, v, o, a, str, RGB(0xff,0x80,0x40));
 	  toff += slen + 10;
 	} else if (st == 6) {
+	  int sp;
+
 	  /* 7.4.2.1.7 Symbol+String 
 	   *   00 [B:B:B] Additional Background Info
 	   *     11    Auxiliary Data Flag
@@ -998,11 +1036,13 @@ void dumpname(void *ptr, size_t len)
 	   *   08 Character Information Data List
 	   *   xx Altitude Information
 	   */
+	  sp = _2b(ptr + toff + 6);
 	  slen = _2b(ptr + toff + 8)*2;
 	  memcpy(str, ptr + toff + 10, slen);
-	  printf("  string: '%s' x:%d y:%d\n", str, xc, yc);
-
-	  bmp_drawstring(bm, pts[0], pts[1], CENTER, CENTER, 0, str, RGB(0xff,0xFF,0xff));
+	  fprintf(stderr,"  string6: '%s' x:%d y:%d  align:%d placement:%d\n", str, xc, yc, 
+		  extract(sp, 14, 15),
+		  extract(sp, 12, 13));
+	  bmp_drawstring(bm, pts[0], pts[1], CENTER, CENTER, 0, 0, str, RGB(0xff,0x80,0x40));
 	  toff += slen + 10;
 	} else {
 	  os_dump(ptr + toff, 32);
@@ -1269,10 +1309,6 @@ void showmap(struct lmr_t *lmr, void *map, size_t len)
 	 extract(mf->dipid, 8, 9),
 	 extract(mf->dipid, 4, 7),
 	 extract(mf->dipid, 0, 3));
-  if (isin(30.2669, -97.7428, 
-	   geo_secs(mf->llpid.lat), geo_secs(mf->llpid.lng), (_rx-_lx)/nx, (_ry-_ly)/ny)) {
-    printf(" @@ AUSTIN\n");
-  }
   for (i=0; i<nData; i++) {
     swapl(&de[i].offset);
     swapw(&de[i].size);
@@ -1324,12 +1360,19 @@ int showbmt(int fd, struct lmr_t *lmr, struct bsmr_t *bsmr, int block, void *pda
   uint32_t add, size;
   struct parman_t *pi;
   mapinfo_t  *mi;
-  int pt, lt, k, j, lvl, bset;
+  int pt, lt, k, j, lvl, bset, nx, ny, mx, my;
   void *mdat;
   int *ip;
 
   lvl = extract(lmr->header, 10, 15);
   bset = extract(bsmr->header, 0, 7);
+  if (lvl != 2)
+    return;
+
+  nx = (1+lmr->nblocksets.lng)*(1+lmr->nblocks.lng)*(1+lmr->nparcels[0].lng);
+  ny = (1+lmr->nblocksets.lat)*(1+lmr->nblocks.lat)*(1+lmr->nparcels[0].lat);
+  _my = (_ry - _ly) / ny;
+  _mx = (_rx - _lx) / nx;
 
   pi = (void *)(pdat + poff);
   mi = (void *)&pi[1];
@@ -1370,14 +1413,33 @@ int showbmt(int fd, struct lmr_t *lmr, struct bsmr_t *bsmr, int block, void *pda
     
     add = mi->map0[j].dsa;
     size = mi->map0[j].size;
+    if (add == 0xffffffff)
+      continue;
 
-    printf("    lvl:%2d.%d blockset:%2d block:%3d parcel:%4d %.8lx %.4x ip:%4d ",
+    mx = my = 0;
+    divbsmr(&mx, &my, 
+	    bset, 1+lmr->nblocksets.lat,
+	    block, 1+lmr->nblocks.lat,
+	    parent >=0 ? parent : j,  1+lmr->nparcels[0].lat,
+	    parent >=0 ? j      : -1, 1+lmr->nparcels[0].lat);
+    printf("    lvl:%2d.%d blockset:%2d block:%3d parcel:%4d %.8lx %.4x ip:%4d [%4d,%4d]{%4d,%4d} %lf,%lf-%lf,%lf",
 	   lvl, pt, bset, block, 
-	   j, add, size, ip[j]);
+	   j, add, size, ip[j],
+	   mx, my,
+	   nx, ny,
+	   _ly+_my*my, _lx+_mx*mx, _ly+(my+2)*_my, _lx+(mx+2)*_mx);
+
     if (parent != -1) {
       printf(" parent: %4d", parent);
     }
     printf("\n");
+    if (size && lvl == 2) {
+      drawme = 0;
+      if (isin(30.402232, -97.657453, _ly+_my*my, _lx+_mx*mx, _my, _mx)) {
+	printf("@@@ AUSTIN\n");
+	drawme = 1;
+      }
+    }
 
     /* Ignore invalid entries */
     if (add == 0xFFFFFFFF)
@@ -1386,11 +1448,11 @@ int showbmt(int fd, struct lmr_t *lmr, struct bsmr_t *bsmr, int block, void *pda
     if (!size) {
       /* Reference */
       showbmt(fd, lmr, bsmr, block, pdat, D(add), j);
-    } else if (lvl == 4 && bset == 6 && block == 0 && ip[j] == 1699) {
+    } else if (drawme) {
       drawme = 1;
 
-      bmsz = 1024;
-      m = S(bmsz / 4096.0, bmsz / 4096.0);
+      bmsz = 4096;
+      m = S(bmsz / 8192.0, bmsz / 8192.0);
       maxx = maxy = INT_MIN;
       minx = miny = INT_MAX;
       bm = bmp_allocsvg(bmsz+1,bmsz+1,"out.svg");
@@ -1604,17 +1666,6 @@ void showalldata()
     }
     moff += SWS(pdmdh->lmr_sz);
 
-    /* Allocate bitmap and scale matrix */
-    if (lvl == 12) {
-      nx = (1+lmr->nblocksets.lng)*(1+lmr->nblocks.lng)*(1+lmr->nparcels[0].lng);
-      ny = (1+lmr->nblocksets.lat)*(1+lmr->nblocks.lat)*(1+lmr->nparcels[0].lat);
-
-      maxx = maxy = INT_MIN;
-      minx = miny = INT_MAX;
-      s = S(bmsz/(4096.0*nx),bmsz/(4096.0*ny));
-      m = s;
-
-    }
   }
 
   /* 6.1.2 Dump Block Set Management Records */

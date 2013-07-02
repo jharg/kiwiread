@@ -1072,9 +1072,9 @@ void bmp_free(bitmap_t *bmp)
   free(bmp);
 }
 
-void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang, const char *str, int rgb)
+void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int orient, int ang, const char *str, int rgb)
 {
-  int i,len,w,tx,ty,j,xo,yo, orient=0;
+  int i,len,w,tx,ty,j,xo,yo;
   vector_t p0,p1,v0,v1;
   matrix_t tr,m;
   int *vec;
@@ -1089,14 +1089,6 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
       return;
     w += simplex[str[i]-32][1];
   }
-  if (bmp->svgfile) {
-    char *horiz = "middle";
-
-    fprintf(bmp->svgfile, "<text x=\"%d\" y=\"%d\" text-anchor=\"%s\" style=\"font-family:monospace;font-size:18px;\" fill=\"rgb(%d,%d,%d)\">%s</text>\n",
-	    x, bmp->h - y, horiz, (rgb >> 16) & 0xff,(rgb>>8) & 0xff, rgb & 0xff, str);
-    return;
-  }
-
   /* Calculate horiz/vert alignment */
   tx = ty = 0;
   if (halign == CENTER)
@@ -1107,6 +1099,17 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
     ty = -22;
   else if (valign == CENTER)
     ty -= 11;
+
+  if (bmp->svgfile) {
+    char *horiz = "middle";
+    char *vert = "middle";
+    fprintf(bmp->svgfile, "<circle cx=\"%d\" cy=\"%d\" r=\"5\" stroke=\"red\"/>\n", x, bmp->h - y);
+    fprintf(bmp->svgfile, "<text x=\"%d\" y=\"%d\" text-anchor=\"%s\" dominant-baseline=\"%s\" transform=\"rotate(%d,%d,%d)\" style=\"font-family:monospace;font-size:18px;\" fill=\"rgb(%d,%d,%d)\">%s</text>\n",
+	    x, bmp->h - y, horiz, vert, 
+	    ang, x, bmp->h - (y), 
+	    (rgb >> 16) & 0xff,(rgb>>8) & 0xff, rgb & 0xff, str);
+    return;
+  }
 
   /* Precalc origin Translate+Rotate matrix */
   tr = matxmat(T(x,y),R(ang));
@@ -1119,7 +1122,7 @@ void bmp_drawstring(bitmap_t *bmp, int x, int y, int halign, int valign, int ang
     if (orient == HORIZ)
       xo += vec[1];
     else
-      yo -= 24;
+      yo -= 25;
 
     v1 = vecinit(-1,-1);
     for (j=0; j<vec[0]; j++) {
