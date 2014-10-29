@@ -24,6 +24,7 @@ typedef struct
   int w,h;
   int *data;
   FILE *svgfile;
+  const char *style;
 } bitmap_t;
 
 bitmap_t *bmp_allocsvg(int w, int h, const char *);
@@ -38,6 +39,7 @@ void bmp_line(bitmap_t *bmp, int x0, int y0, int x1, int y1, int rgb);
 void bmp_poly(bitmap_t *bmp, int nvertex, int *xy, int rgb);
 void bmp_polyfill(bitmap_t *bmp, int nvertex, int *xy, int rgb);
 void bmp_polyline(bitmap_t *bmp, int nvertex, int *xy, int rgb);
+void bmp_setstyle(bitmap_t *bmp, const char *);
 
 #define RGB(r,g,b) ((b) + ((g) << 8) + ((r) << 16))
 

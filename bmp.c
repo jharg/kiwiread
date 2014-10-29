@@ -46,6 +46,17 @@ bitmap_t *bmp_allocsvg(int w, int h, const char *file)
   return bmp;
 }
 
+void bmp_setstyle(bitmap_t *bmp, const char *style)
+{
+  if (bmp->style) {
+    free(bmp->style);
+    bmp->style = NULL;
+  }
+  if (style) {
+    bmp->style = strdup(style);
+  }
+}
+
 bitmap_t *bmp_alloc(int w, int h)
 {
   bitmap_t *bmp;
@@ -194,8 +205,8 @@ void bmp_polyline(bitmap_t *bmp, int nvertex, int *xy, int rgb)
     for (i=0; i<nvertex; i++) {
       fprintf(bmp->svgfile, "%d,%d ", xy[i*2], bmp->h-xy[i*2+1]);
     }
-    fprintf(bmp->svgfile, "\" style=\"fill:none;stroke:rgb(%d,%d,%d);stroke-width:1\"/>\n",
-	    (rgb >> 16) & 0xFF, (rgb >> 8) & 0xff, rgb &  0xff);
+    fprintf(bmp->svgfile, "\" style=\"fill:none;stroke:rgb(%d,%d,%d);stroke-width:1;%s\"/>\n",
+	    (rgb >> 16) & 0xFF, (rgb >> 8) & 0xff, rgb &  0xff, bmp->style ? bmp->style : "");
     return;
   }
   for (i=0; i<nvertex-1; i++) {
@@ -1068,6 +1079,8 @@ void printmat(matrix_t m)
 
 void bmp_free(bitmap_t *bmp)
 {
+  if (bmp->style)
+    free(bmp->style);
   free(bmp->data);
   free(bmp);
 }
